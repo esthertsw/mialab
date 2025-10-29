@@ -36,7 +36,7 @@ class ImageNormalization(pymia_fltr.Filter):
         img_normalised = (img_arr - min_val) / (max_val - min_val)
 
         img_out = sitk.GetImageFromArray(img_normalised)
-        img_out.CopyInformation(img_normalised) # copy spacing, origin, direction
+        img_out.CopyInformation(image) # copy spacing, origin, direction
 
         return img_out
 
@@ -82,11 +82,12 @@ class SkullStripping(pymia_fltr.Filter):
         mask = params.img_mask  # the brain mask
 
         # todo: remove the skull from the image by using the brain mask
+        image_original = image
         img_arr = sitk.GetArrayFromImage(image)
         mask_arr = sitk.GetArrayFromImage(mask)
         img_arr = img_arr * mask_arr
         image = sitk.GetImageFromArray(img_arr)
-        image.CopyInformation(image) # copy spacing, origin, direction
+        image.CopyInformation(image_original) # copy spacing, origin, direction
 
         return image
 
