@@ -4,12 +4,20 @@ Image post-processing aims to alter images such that they depict a desired repre
 """
 import warnings
 
-# import numpy as np
+import numpy as np
 # import pydensecrf.densecrf as crf
 # import pydensecrf.utils as crf_util
 import pymia.filtering.filter as pymia_fltr
 import SimpleITK as sitk
 
+class ImagePostProcessingParams(pymia_fltr.FilterParams):
+    """Post processing parameters."""
+    def __init__(self, morph: int):
+        """Initializes a new instance of the post processing
+        Args:
+            img_probability (sitk.Image): The posterior probability image.
+        """
+        self.morph_radius = morph
 
 class ImagePostProcessing(pymia_fltr.Filter):
     """Represents a post-processing filter."""
@@ -18,7 +26,7 @@ class ImagePostProcessing(pymia_fltr.Filter):
         """Initializes a new instance of the ImagePostProcessing class."""
         super().__init__()
 
-    def execute(self, image: sitk.Image, params: pymia_fltr.FilterParams = None) -> sitk.Image:
+    def execute(self, image: sitk.Image, params: ImagePostProcessingParams = None) -> sitk.Image:
         """Registers an image.
 
         Args:
@@ -30,9 +38,28 @@ class ImagePostProcessing(pymia_fltr.Filter):
         """
 
         # todo: replace this filter by a post-processing - or do we need post-processing at all?
-        warnings.warn('No post-processing implemented. Can you think about something?')
+        #warnings.warn('No post-processing implemented. Can you think about something?')
+        if params is None:
+            raise ValueError("Parameters are required for post-processing")
 
-        return image
+        img_array = sitk.GetArrayFromImage(image)
+        labels = list(set(img_array.flatten()))  # unique labels in image
+
+        img_out = sitk.Image(image)  
+
+        for label_val in labels:
+            if label_val == 0:  # usually background
+                continue
+
+            mask = sitk.BinaryThreshold(image, lowerThreshold=float(label_val), upperThreshold=float(label_val), insideValue=1, outsideValue=0)
+
+            mask = sitk.BinaryMorphologicalOpening(mask, [params.morph_radius]*3)
+            mask = sitk.BinaryMorphologicalClosing(mask, [params.morph_radius]*3)
+
+            img_out = sitk.Mask(img_out, mask, outsideValue=0)
+            img_out = img_out + sitk.Cast(mask, img_out.GetPixelID()) * label_val
+
+        return img_out
 
     def __str__(self):
         """Gets a printable string representation.
