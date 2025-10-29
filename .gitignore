@@ -1,7 +1,8 @@
 # Created by .ignore support plugin (hsz.mobi)
 
 # SELF-ADDED:
-mialab/data/*/*.txt
+mialab/data/*/*/*.txt
+mialab/data/atlas/*.txt
 
 ### Python template
 # Byte-compiled / optimized / DLL files
