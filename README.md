@@ -26,4 +26,9 @@ Enjoy!
 
 ----
 
+Environment prerequisites:
+- python~=3.10 (prevent wheel building error with SimpleITK)
+
+----
+
 Found a bug or do you have suggestions? Open an issue or better submit a pull request.
