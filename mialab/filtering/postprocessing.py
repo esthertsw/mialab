@@ -48,7 +48,7 @@ class ImagePostProcessing(pymia_fltr.Filter):
         img_out = sitk.Image(image)  
 
         for label_val in labels:
-            if label_val == 0:  # usually background
+            if label_val == 0:  # background
                 continue
 
             mask = sitk.BinaryThreshold(image, lowerThreshold=float(label_val), upperThreshold=float(label_val), insideValue=1, outsideValue=0)
@@ -56,8 +56,11 @@ class ImagePostProcessing(pymia_fltr.Filter):
             mask = sitk.BinaryMorphologicalOpening(mask, [params.morph_radius]*3)
             mask = sitk.BinaryMorphologicalClosing(mask, [params.morph_radius]*3)
 
-            img_out = sitk.Mask(img_out, mask, outsideValue=0)
-            img_out = img_out + sitk.Cast(mask, img_out.GetPixelID()) * label_val
+            img_out = img_out + sitk.Cast(mask, sitk.sitkUInt8) * int(label_val)
+
+        before = sitk.GetArrayFromImage(image)
+        after = sitk.GetArrayFromImage(img_out)
+        print("Post-processing difference:", np.sum(before != after))
 
         return img_out
 
