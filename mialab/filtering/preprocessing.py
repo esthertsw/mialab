@@ -79,15 +79,9 @@ class SkullStripping(pymia_fltr.Filter):
         Returns:
             sitk.Image: The normalized image.
         """
-        mask = params.img_mask  # the brain mask
 
         # todo: remove the skull from the image by using the brain mask
-        image_original = image
-        img_arr = sitk.GetArrayFromImage(image)
-        mask_arr = sitk.GetArrayFromImage(mask)
-        img_arr = img_arr * mask_arr
-        image = sitk.GetImageFromArray(img_arr)
-        image.CopyInformation(image_original) # copy spacing, origin, direction
+        image = sitk.Mask(image, params.img_mask)
 
         return image
 
