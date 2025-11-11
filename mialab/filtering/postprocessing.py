@@ -45,7 +45,7 @@ class ImagePostProcessing(pymia_fltr.Filter):
             return image
 
         img_array = sitk.GetArrayFromImage(image)
-        labels = list(set(img_array.flatten()))  # unique labels in image
+        labels = np.unique(img_array)  # unique labels in image
 
         img_out = sitk.Image(image.GetSize(), sitk.sitkUInt8)
         img_out.CopyInformation(image)
@@ -54,7 +54,7 @@ class ImagePostProcessing(pymia_fltr.Filter):
             if label_val == 0:  # background
                 continue
 
-            mask = sitk.BinaryThreshold(image, lowerThreshold=float(label_val), upperThreshold=float(label_val), insideValue=1, outsideValue=0)
+            mask = sitk.BinaryThreshold(image, lowerThreshold=int(label_val), upperThreshold=int(label_val), insideValue=1, outsideValue=0)
 
             cc = sitk.ConnectedComponent(mask)
             cc = sitk.RelabelComponent(cc, sortByObjectSize=True, minimumObjectSize=params.min_size)
@@ -64,7 +64,8 @@ class ImagePostProcessing(pymia_fltr.Filter):
                 mask = sitk.BinaryMorphologicalOpening(mask, [params.morph_radius]*3)
                 mask = sitk.BinaryMorphologicalClosing(mask, [params.morph_radius]*3)
 
-            img_out = img_out + sitk.Cast(mask, sitk.sitkUInt8) * int(label_val)
+            img_out = sitk.Add(img_out, sitk.Multiply(mask, int(label_val)))
+
 
         before = sitk.GetArrayFromImage(image)
         after = sitk.GetArrayFromImage(img_out)
