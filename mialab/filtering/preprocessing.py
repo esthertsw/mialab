@@ -139,7 +139,7 @@ class ImageRegistration(pymia_fltr.Filter):
         # todo: replace this filter by a registration. Registration can be costly, therefore, we provide you the
         # transformation, which you only need to apply to the image!
 
-        atlas = params.atlas
+        atlas = sitk.Cast(params.atlas, image.GetPixelID())
         transform = params.transformation
         is_ground_truth = params.is_ground_truth  # the ground truth will be handled slightly different
         if is_ground_truth:
