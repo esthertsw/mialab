@@ -12,9 +12,10 @@ import numpy as np
 class ImageNormalization(pymia_fltr.Filter):
     """Represents a normalization filter."""
 
-    def __init__(self):
+    def __init__(self, atlas):
         """Initializes a new instance of the ImageNormalization class."""
         super().__init__()
+        self.atlas = atlas
 
     def execute(self, image: sitk.Image, params: pymia_fltr.FilterParams = None) -> sitk.Image:
         """Executes a normalization on an image.
@@ -27,15 +28,21 @@ class ImageNormalization(pymia_fltr.Filter):
             sitk.Image: The normalized image.
         """
 
-        img_arr = sitk.GetArrayFromImage(image)
-
         # todo: normalize the image using numpy
-        img_arr = sitk.GetArrayFromImage(image).astype(np.float32)
-        min_val = np.min(img_arr)
-        max_val = np.max(img_arr)
-        img_normalised = (img_arr - min_val) / (max_val - min_val)
+        # ----- min-max normalization -----
+        # img_arr = sitk.GetArrayFromImage(image).astype(np.float32)
+        # min_val = np.min(img_arr)
+        # max_val = np.max(img_arr)
+        # img_normalised = (img_arr - min_val) / (max_val - min_val)
+        # img_out = sitk.GetImageFromArray(img_normalised)
 
-        img_out = sitk.GetImageFromArray(img_normalised)
+        # ----- z-score normalization -----
+        img_out = sitk.Normalize(image)
+
+        # ----- Histogram-matching normalization -----
+        # img_format = image.GetPixelID()
+        # img_out = sitk.HistogramMatching(image, sitk.Cast(self.atlas, img_format))
+
         img_out.CopyInformation(image) # copy spacing, origin, direction
 
         return img_out
