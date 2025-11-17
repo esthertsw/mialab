@@ -11,6 +11,7 @@ import warnings
 
 import SimpleITK as sitk
 import sklearn.ensemble as sk_ensemble
+from sklearn.model_selection import GridSearchCV
 import numpy as np
 import pymia.data.conversion as conversion
 import pymia.evaluation.writer as writer
@@ -72,12 +73,12 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     data_train = np.concatenate([img.feature_matrix[0] for img in images])
     labels_train = np.concatenate([img.feature_matrix[1] for img in images]).squeeze()
 
-    forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1],
-                                                n_estimators=50, # default 100 in docs
-                                                max_depth=10)
+    params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50, 60]}
+    forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
+    search = GridSearchCV(forest, params, cv=5)
 
     start_time = timeit.default_timer()
-    forest.fit(data_train, labels_train)
+    search.fit(data_train, labels_train)
     print(' Time elapsed:', timeit.default_timer() - start_time, 's')
 
     # create a result directory with timestamp
