@@ -73,14 +73,20 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     data_train = np.concatenate([img.feature_matrix[0] for img in images])
     labels_train = np.concatenate([img.feature_matrix[1] for img in images]).squeeze()
 
-    params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
-    forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
-    search = GridSearchCV(forest, params, cv=3)
+    #uncomment if running GridSearch
+    #params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
+    #model = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
+    #forest = GridSearchCV(model, params, cv=3)
+    
+    #otherwise:
+    forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                n_estimators=100, 
+                                                max_depth=50)
 
     start_time = timeit.default_timer()
-    search.fit(data_train, labels_train)
+    forest.fit(data_train, labels_train)
     print(' Time elapsed:', timeit.default_timer() - start_time, 's')
-    print(' GridSearch best parameters: ', search.best_params_)
+    #print(' GridSearch best parameters: ', forest.best_params_)
 
     # create a result directory with timestamp
     t = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
@@ -109,8 +115,8 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         print('-' * 10, 'Testing', img.id_)
 
         start_time = timeit.default_timer()
-        predictions = search.predict(img.feature_matrix[0])
-        probabilities = search.predict_proba(img.feature_matrix[0])
+        predictions = forest.predict(img.feature_matrix[0])
+        probabilities = forest.predict_proba(img.feature_matrix[0])
         print(' Time elapsed:', timeit.default_timer() - start_time, 's')
 
         # convert prediction and probabilities back to SimpleITK images
