@@ -80,7 +80,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     start_time = timeit.default_timer()
     search.fit(data_train, labels_train)
     print(' Time elapsed:', timeit.default_timer() - start_time, 's')
-    print(' GridSearch best parameters: ', search.best_score_())
+    print(' GridSearch best parameters: ', search.best_params_)
 
     # create a result directory with timestamp
     t = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
