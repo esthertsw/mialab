@@ -114,6 +114,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     for img in images_test:
         print('-' * 10, 'Testing', img.id_)
 
+        if img.id_ == "117122":
+            print("saving pre-processed")
+            sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, 'pre_process_image_'+ img.id_ + '.mha'), True)
+        
         start_time = timeit.default_timer()
         predictions = forest.predict(img.feature_matrix[0])
         probabilities = forest.predict_proba(img.feature_matrix[0])
