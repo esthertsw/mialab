@@ -151,7 +151,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         images_probabilities.append(image_probabilities)
 
     # post-process segmentation and evaluate with post-processing
-    post_process_params = {'simple_post': True, 'morph_radius': 0, 'min_size': 50} # morph_radius of 0 makes post-processing diff much smaller (1M to 10k)
+    post_process_params = {'simple_post': True, 'morph_radius': 0, 'min_size': 50}  # morph_radius of 0 makes post-processing diff much smaller (1M to 10k)
     # post_process_params = {'crf_post': True}
     images_post_processed = putil.post_process_batch(images_test, images_prediction, images_probabilities,
                                                      post_process_params, multi_process=False)

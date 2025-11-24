@@ -247,6 +247,10 @@ def pre_process(id_: str, paths: dict, **kwargs) -> structure.BrainImage:
     # execute pipeline on the ground truth image
     img.images[structure.BrainImageTypes.GroundTruth] = pipeline_gt.execute(
         img.images[structure.BrainImageTypes.GroundTruth])
+    
+    img.images[structure.BrainImageTypes.GroundTruth] = sitk.Mask(
+    img.images[structure.BrainImageTypes.GroundTruth],
+    img.images[structure.BrainImageTypes.BrainMask])
 
     # update image properties to atlas image properties after registration
     img.image_properties = conversion.ImageProperties(img.images[structure.BrainImageTypes.T1w])
@@ -280,7 +284,7 @@ def post_process(img: structure.BrainImage, segmentation: sitk.Image, probabilit
     pipeline = fltr.FilterPipeline()
     if kwargs.get('simple_post', False):
         pipeline.add_filter(fltr_postp.ImagePostProcessing())
-        pipeline.set_param(fltr_postp.ImagePostProcessingParams(kwargs.get('morph_radius', 0), kwargs.get('min_size', 50)),
+        pipeline.set_param(fltr_postp.ImagePostProcessingParams(kwargs.get('morph_radius', 0), kwargs.get('min_size', 50), img.images[structure.BrainImageTypes.BrainMask]),
                            len(pipeline.filters) - 1)
     if kwargs.get('crf_post', False):
         pipeline.add_filter(fltr_postp.DenseCRF())

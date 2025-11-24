@@ -12,13 +12,14 @@ import SimpleITK as sitk
 
 class ImagePostProcessingParams(pymia_fltr.FilterParams):
     """Post processing parameters."""
-    def __init__(self, morph: int, min_size: int):
+    def __init__(self, morph: int, min_size: int, img_mask: sitk.Image):
         """Initializes a new instance of the post processing
         Args:
             img_probability (sitk.Image): The posterior probability image.
         """
         self.morph_radius = morph
         self.min_size = min_size
+        self.img_mask = img_mask
 
 class ImagePostProcessing(pymia_fltr.Filter):
     """Represents a post-processing filter."""
@@ -70,6 +71,8 @@ class ImagePostProcessing(pymia_fltr.Filter):
         before = sitk.GetArrayFromImage(image)
         after = sitk.GetArrayFromImage(img_out)
         print("Post-processing difference:", np.sum(before != after))
+        #  force background outside brain
+        img_out = sitk.Mask(img_out, params.img_mask)
 
         return img_out
 
