@@ -56,6 +56,23 @@ class ImageNormalization(pymia_fltr.Filter):
         return 'ImageNormalization:\n' \
             .format(self=self)
 
+class BrainMaskMorphingParameters(pymia_fltr.FilterParams):
+    """Brain Mask Morphing parameters."""
+    def __init__(self, morph):
+        self.morph_radius = morph
+
+class BrainMaskMorphing(pymia_fltr.Filter):
+    def __init__(self):
+        """Initializes a new instance of the BrainMaskMorphing class."""
+        super().__init__()
+
+    def execute(self, brain_mask, params: BrainMaskMorphingParameters = None):
+        if params is None:
+            raise ValueError("Parameters are required for post-processing")
+            return brain_mask
+        brain_mask = sitk.BinaryMorphologicalClosing(brain_mask, [params.morph_radius]*3)
+        return brain_mask
+
 
 class SkullStrippingParameters(pymia_fltr.FilterParams):
     """Skull-stripping parameters."""

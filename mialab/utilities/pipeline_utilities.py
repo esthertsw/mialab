@@ -194,7 +194,13 @@ def pre_process(id_: str, paths: dict, **kwargs) -> structure.BrainImage:
         pipeline_brain_mask.add_filter(fltr_prep.ImageRegistration())
         pipeline_brain_mask.set_param(fltr_prep.ImageRegistrationParameters(atlas_t1, img.transformation, True),
                                       len(pipeline_brain_mask.filters) - 1)
-
+    
+    # Fill holes in brain mask
+    if kwargs.get('brain_mask_morph', False):
+        pipeline_brain_mask.add_filter(fltr_prep.BrainMaskMorphing())
+        pipeline_brain_mask.set_param(fltr_prep.BrainMaskMorphingParameters(kwargs.get('morph_radius', 9)),
+                           len(pipeline_brain_mask.filters) - 1)
+        
     # execute pipeline on the brain mask image
     img.images[structure.BrainImageTypes.BrainMask] = pipeline_brain_mask.execute(
         img.images[structure.BrainImageTypes.BrainMask])
