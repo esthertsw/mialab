@@ -284,7 +284,7 @@ def post_process(img: structure.BrainImage, segmentation: sitk.Image, probabilit
 
     return pipeline.execute(segmentation)
 
-
+    
 def init_evaluator() -> eval_.Evaluator:
     """Initializes an evaluator.
 
@@ -293,8 +293,22 @@ def init_evaluator() -> eval_.Evaluator:
     """
 
     # initialize metrics
-    metrics = [metric.DiceCoefficient(), 
-               metric.HausdorffDistance(percentile=95, metric='HDRFDST')
+    metrics = [
+              # Overlap-based
+              metric.DiceCoefficient(),
+              metric.JaccardCoefficient(), # Added Jaccard Coefficient
+
+              # Volume-based
+              metric.VolumeSimilarity(),  # Added Volume Similarity
+              # Distance-based
+              metric.HausdorffDistance(percentile=95, metric='HDRFDST'),
+              metric.AverageDistance(), # Added Average Surface Distance
+              # metric.SurfaceDistance(percentile=95), # Added Surface Distance
+              # Classification
+              metric.Precision(), # Added Precision
+              metric.Specificity(), # Added Specificity
+              metric.Accuracy(), # Added Accuracy
+              # Information-theoretic
                ]
 
     # define the labels to evaluate
