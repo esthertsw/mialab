@@ -3,6 +3,7 @@
 # SELF-ADDED:
 mialab/data/*/*/*.txt
 mialab/data/atlas/*.txt
+mia-result/*
 
 ### Python template
 # Byte-compiled / optimized / DLL files
