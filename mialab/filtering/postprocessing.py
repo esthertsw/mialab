@@ -67,12 +67,12 @@ class ImagePostProcessing(pymia_fltr.Filter):
 
             img_out = sitk.Add(img_out, sitk.Multiply(mask, int(label_val)))
 
+        #  force background outside brain
+        img_out = sitk.Mask(img_out, params.img_mask)
 
         before = sitk.GetArrayFromImage(image)
         after = sitk.GetArrayFromImage(img_out)
         print("Post-processing difference:", np.sum(before != after))
-        #  force background outside brain
-        img_out = sitk.Mask(img_out, params.img_mask)
 
         return img_out
 
