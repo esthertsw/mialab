@@ -74,9 +74,11 @@ def main(result_dir, metric_list, combine_plots=False):
                 for i in range(len(metric_list))]
         plt.legend(handles=legend_handles, title="Metrics")
 
+        save_path = os.path.join(os.getcwd(), 'mia-result', result_dir, f'{"_".join(metric_list)}_plot.png')
+        plt.savefig(save_path)
         plt.tight_layout()
         plt.show()
-        
+
     else:
         for metric_name in metric_list:
             
