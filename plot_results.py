@@ -34,7 +34,7 @@ def main(result_dir, metric_name):
     
     # Plot a boxplot
     plt.figure(figsize=(10,6))
-    plt.boxplot(data, labels=labels)
+    plt.boxplot(data, tick_labels=labels)
     plt.title(f"{metric_name} per Brain Structure")
     plt.ylabel(metric_name)
     plt.grid(axis='y')
