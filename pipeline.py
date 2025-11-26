@@ -74,8 +74,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # =================================
     # Start of Pre-processing debugging
     # =================================
-    # params_list = list(crawler.data.items())
-    # id_list = [id_ for id_, _ in params_list]
     # for i, img in enumerate(images):
     #     sitk.WriteImage(img.images[structure.BrainImageTypes.GroundTruth], 
     #     os.path.join(result_dir, 'preprocess_debug', id_list[i] + '_ground_truth.mha'),
@@ -130,9 +128,9 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     for img in images_test:
         print('-' * 10, 'Testing', img.id_)
 
-        if img.id_ == "117122":
-            print("saving pre-processed")
-            sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, 'pre_process_image_'+ img.id_ + '.mha'), True)
+        # if img.id_ == "117122":
+        #     print("saving pre-processed")
+        #     sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, 'pre_process_image_'+ img.id_ + '.mha'), True)
         
         start_time = timeit.default_timer()
         predictions = forest.predict(img.feature_matrix[0])
