@@ -62,7 +62,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     pre_process_params = {'skullstrip_pre': True,
                           'normalization_pre': True,
                           'registration_pre': True,
-                          'brain_mask_morph': True,
+                        #   'brain_mask_morph': True,
                           'coordinates_feature': True,
                           'intensity_feature': True,
                           'gradient_intensity_feature': True
@@ -77,8 +77,8 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # params_list = list(crawler.data.items())
     # id_list = [id_ for id_, _ in params_list]
     # for i, img in enumerate(images):
-    #     sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], 
-    #     os.path.join(result_dir, 'preprocess_debug', id_list[i] + '_morph9_reg_skullstrip.mha'),
+    #     sitk.WriteImage(img.images[structure.BrainImageTypes.GroundTruth], 
+    #     os.path.join(result_dir, 'preprocess_debug', id_list[i] + '_ground_truth.mha'),
     #     True)
 
     # return
