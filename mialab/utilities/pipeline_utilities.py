@@ -192,7 +192,7 @@ def pre_process(id_: str, paths: dict, **kwargs) -> structure.BrainImage:
     pipeline_brain_mask = fltr.FilterPipeline()
     if kwargs.get('registration_pre', False):
         pipeline_brain_mask.add_filter(fltr_prep.ImageRegistration())
-        pipeline_brain_mask.set_param(fltr_prep.ImageRegistrationParameters(atlas_t1, img.transformation, True),
+        pipeline_brain_mask.set_param(fltr_prep.ImageRegistrationParameters(atlas_t1, img.transformation),
                                       len(pipeline_brain_mask.filters) - 1)
     
     # Fill holes in brain mask
@@ -256,8 +256,10 @@ def pre_process(id_: str, paths: dict, **kwargs) -> structure.BrainImage:
     img.image_properties = conversion.ImageProperties(img.images[structure.BrainImageTypes.T1w])
 
     # extract the features
-    feature_extractor = FeatureExtractor(img, **kwargs)
-    img = feature_extractor.execute()
+    if kwargs.get('coordinates_feature', False) or kwargs.get('intensity_feature', False) or kwargs.get('gradient_intensity_feature', False):
+        # Only run feature extraction if args include it
+        feature_extractor = FeatureExtractor(img, **kwargs)
+        img = feature_extractor.execute()
 
     img.feature_images = {}  # we free up memory because we only need the img.feature_matrix
     # for training of the classifier
