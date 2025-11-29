@@ -16,6 +16,8 @@ import numpy as np
 import pymia.data.conversion as conversion
 import pymia.evaluation.writer as writer
 
+import matplotlib.pyplot as plt
+
 try:
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
@@ -33,6 +35,32 @@ LOADING_KEYS = [structure.BrainImageTypes.T1w,
                 structure.BrainImageTypes.BrainMask,
                 structure.BrainImageTypes.RegistrationTransform]  # the list of data we will load
 
+def save_slice(img, title, out_path, slice_idx=None):
+    """Save a mid-axial slice of a SimpleITK 3D image."""
+    #for debugging
+    arr = sitk.GetArrayFromImage(img)
+    if slice_idx is None:
+        slice_idx = arr.shape[0] // 2  # axial middle slice
+    plt.figure(figsize=(5, 5))
+    plt.imshow(arr[slice_idx], cmap='gray')
+    plt.title(title)
+    plt.axis('off')
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
+def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.GroundTruth):
+    """Count the number of voxels per class over a list of images using a standard dict."""
+    voxel_counts = {}
+    for img in image_list:
+        gt_img = img.images[label_key]
+        gt_arr = sitk.GetArrayFromImage(gt_img)
+        classes, counts = np.unique(gt_arr, return_counts=True)
+        for c, count in zip(classes, counts):
+            if c in voxel_counts:
+                voxel_counts[c] += count
+            else:
+                voxel_counts[c] = count
+    return voxel_counts
 
 def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str):
     """Brain tissue segmentation using decision forests.
@@ -48,6 +76,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         - Post-processing of the segmentation
         - Evaluation of the segmentation
     """
+    # create a result directory with timestamp (moved to beginning to save debugging stuff in same dir)
+    t = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    result_dir = os.path.join(result_dir, t)
+    os.makedirs(result_dir, exist_ok=True)
 
     # load atlas images
     putil.load_atlas_images(data_atlas_dir)
@@ -74,18 +106,51 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # =================================
     # Start of Pre-processing debugging
     # =================================
-    # for i, img in enumerate(images):
-    #     sitk.WriteImage(img.images[structure.BrainImageTypes.GroundTruth], 
-    #     os.path.join(result_dir, 'preprocess_debug', id_list[i] + '_ground_truth.mha'),
-    #     True)
+    # debug_dir = os.path.join(result_dir, "_debug_train")
+    # os.makedirs(debug_dir, exist_ok=True)
+    # example_img = images[0]
+    # t1w_arr = sitk.GetArrayFromImage(example_img.images[structure.BrainImageTypes.T1w])
+    # t2w_arr = sitk.GetArrayFromImage(example_img.images[structure.BrainImageTypes.T2w])
+    # bm_arr = sitk.GetArrayFromImage(example_img.images[structure.BrainImageTypes.BrainMask])
+    
+    # print("example T1w shape", t1w_arr.shape)
+    # print("example T2w shape",t2w_arr.shape)
+    # print("example Brain mask shape", bm_arr.shape)
+    
+    # for img in images:
+    #     save_slice(img.images[structure.BrainImageTypes.T1w],
+    #             f"{img.id_} – T1 preproccessed",
+    #             os.path.join(debug_dir, f"{img.id_}_T1pre.png"))
 
-    # return
-    # =================================
+    #     save_slice(img.images[structure.BrainImageTypes.BrainMask],
+    #             f"{img.id_} – Brain Mask",
+    #             os.path.join(debug_dir, f"{img.id_}_mask.png"))
+
+    #     save_slice(img.images[structure.BrainImageTypes.T2w],
+    #             f"{img.id_} – T2 preproccessed",
+    #             os.path.join(debug_dir, f"{img.id_}_T2pre.png"))
+    # # =================================
     # End of Pre-processing debugging
     # =================================
+
     # generate feature matrix and label vector
     data_train = np.concatenate([img.feature_matrix[0] for img in images])
     labels_train = np.concatenate([img.feature_matrix[1] for img in images]).squeeze()
+
+    # Couting voxel proportions
+    train_voxel_counts = count_voxels_per_class(images)
+    
+        # =================================
+    # Beginning Debugging features
+    # =================================
+    # example_img = images[0]
+    # feat = example_img.feature_matrix[0]
+    #
+    # print("feature [0] shape", example_img.feature_matrix[0].shape)
+    # print("feature [1] shape", example_img.feature_matrix[1].shape)
+    # =================================
+    # End Debugging features
+    # =================================
 
     #uncomment if running GridSearch
     #params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
@@ -102,11 +167,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     print(' Time elapsed:', timeit.default_timer() - start_time, 's')
     #print(' GridSearch best parameters: ', forest.best_params_)
 
-    # create a result directory with timestamp
-    t = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    result_dir = os.path.join(result_dir, t)
-    os.makedirs(result_dir, exist_ok=True)
-
     print('-' * 5, 'Testing...')
 
     # initialize evaluator
@@ -121,6 +181,43 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # load images for testing and pre-process
     pre_process_params['training'] = False
     images_test = putil.pre_process_batch(crawler.data, pre_process_params, multi_process=False)
+
+    #Counting voxels for metric eval
+    test_voxel_counts = count_voxels_per_class(images_test)
+    
+    #saving voxel counts in csv
+    all_classes = set(train_voxel_counts.keys()).union(test_voxel_counts.keys())
+    total_train = sum(train_voxel_counts.values())
+    total_test = sum(test_voxel_counts.values())
+    total_all = total_train + total_test
+
+    csv_rows = []
+    for cls in sorted(all_classes):
+        train_count = train_voxel_counts.get(cls, 0)
+        test_count = test_voxel_counts.get(cls, 0)
+        total_count = train_count + test_count
+        csv_rows.append({
+            'Class': cls,
+            'Training_Voxels': train_count,
+            'Testing_Voxels': test_count,
+            'Total_Voxels': total_count,
+            'Training_%': train_count / total_train * 100 if total_train > 0 else 0,
+            'Testing_%': test_count / total_test * 100 if total_test > 0 else 0,
+            'Total_%': total_count / total_all * 100 if total_all > 0 else 0
+        })
+
+    header = ['Class', 'Training_Voxels', 'Testing_Voxels', 'Total_Voxels',
+          'Training_%', 'Testing_%', 'Total_%']
+
+    csv_file = os.path.join(result_dir, 'voxel_counts_summary.csv')
+
+    with open(csv_file, 'w') as f:
+        f.write(','.join(header) + '\n')
+        for row in csv_rows:
+            line = [str(row[h]) for h in header]
+            f.write(','.join(line) + '\n')
+
+    # end of voxel count saving for evaluation    
 
     images_prediction = []
     images_probabilities = []
@@ -161,6 +258,9 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         # save results
         sitk.WriteImage(images_prediction[i], os.path.join(result_dir, images_test[i].id_ + '_SEG.mha'), True)
         sitk.WriteImage(images_post_processed[i], os.path.join(result_dir, images_test[i].id_ + '_SEG-PP.mha'), True)
+        sitk.WriteImage(img.images[structure.BrainImageTypes.GroundTruth], os.path.join(result_dir, images_test[i].id_ + '_GT_reg.mha'), True)
+        sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, images_test[i].id_ + '_T1w_reg.mha'), True)
+        sitk.WriteImage(img.images[structure.BrainImageTypes.T2w], os.path.join(result_dir, images_test[i].id_ + '_T2w_reg.mha'), True)        
 
     # use two writers to report the results
     os.makedirs(result_dir, exist_ok=True)  # generate result directory, if it does not exists
