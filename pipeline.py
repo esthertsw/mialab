@@ -62,7 +62,7 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
                 voxel_counts[c] = count
     return voxel_counts
 
-def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str):
+def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str):
     """Brain tissue segmentation using decision forests.
 
     The main routine executes the medical image analysis pipeline:
@@ -140,7 +140,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # Couting voxel proportions
     train_voxel_counts = count_voxels_per_class(images)
     
-        # =================================
+    # =================================
     # Beginning Debugging features
     # =================================
     # example_img = images[0]
@@ -152,15 +152,31 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # End Debugging features
     # =================================
 
-    #uncomment if running GridSearch
-    #params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
-    #model = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
-    #forest = GridSearchCV(model, params, cv=3)
+    if random_forest_type=="GridSearch":
+        print('-' * 5, 'Running GridSearch')
+        params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
+        model = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
+        forest = GridSearchCV(model, params, cv=3)
+    elif random_forest_type=="Balanced":
+        #forest for class balanced version
+        print('-' * 5, 'Using balanced random forest')
+        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                    n_estimators=100, 
+                                                    max_depth=50, 
+                                                    class_weight="balanced")
+    elif random_forest_type=="Extra_imbalance":
+        #forest for class balanced version
+        print('-' * 5, 'Using exagerated imbalanced random forest')
+        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                    n_estimators=100, 
+                                                    max_depth=50, 
+                                                    class_weight={1:5, 2:5})
     
-    #otherwise:
-    forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                n_estimators=100, 
-                                                max_depth=50)
+    elif random_forest_type=="Standard":
+        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                    n_estimators=100, 
+                                                    max_depth=50)
+    
 
     start_time = timeit.default_timer()
     forest.fit(data_train, labels_train)
@@ -216,7 +232,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         for row in csv_rows:
             line = [str(row[h]) for h in header]
             f.write(','.join(line) + '\n')
-
     # end of voxel count saving for evaluation    
 
     images_prediction = []
@@ -224,11 +239,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
     for img in images_test:
         print('-' * 10, 'Testing', img.id_)
-
-        # if img.id_ == "117122":
-        #     print("saving pre-processed")
-        #     sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, 'pre_process_image_'+ img.id_ + '.mha'), True)
-        
+ 
         start_time = timeit.default_timer()
         predictions = forest.predict(img.feature_matrix[0])
         probabilities = forest.predict_proba(img.feature_matrix[0])
@@ -316,5 +327,12 @@ if __name__ == "__main__":
         help='Directory with testing data.'
     )
 
+    parser.add_argument(
+        '--RF',
+        type=str,
+        default="Standard",
+        help='Specify whether to run random forest with GridSearch or Balanced classes'
+    )
+
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF)
