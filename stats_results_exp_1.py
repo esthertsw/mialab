@@ -57,7 +57,7 @@ def stats(metric):
     overall_df.plot(kind="bar", legend=False, title=f"Overall Macro-{metric}")
     plt.ylabel(metric)
     plt.tight_layout()
-    plt.savefig(f"stats/overall_macro_comparison{metric}.png")
+    plt.savefig(f"stats/overall_comparison_{metric}.png")
     plt.close()
 
     comparisons = [
@@ -78,6 +78,14 @@ def stats(metric):
     plt.title(f"Balanced - Normal ({metric})")
     plt.tight_layout()
     plt.savefig(f"stats/heatmap_balanced_vs_normal_{metric}.png")
+    plt.close()
+
+    diff2 = (to_matrix(df_weighted, metric) - to_matrix(df_normal, metric)).to_frame("Diff")
+    plt.figure(figsize=(6,4))
+    sns.heatmap(diff2, annot=True, cmap="coolwarm", center=0)
+    plt.title(f"Weighted - Normal ({metric})")
+    plt.tight_layout()
+    plt.savefig(f"stats/heatmap_weighted_vs_normal_{metric}.png")
     plt.close()
 
     #normalised heatmap
