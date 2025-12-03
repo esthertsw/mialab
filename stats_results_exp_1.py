@@ -22,12 +22,15 @@ def stats(metric):
 
     df_normal   = pd.read_csv("mia-result/Standard 12-02/results_summary.csv", sep=';')
     df_balanced = pd.read_csv("mia-result/Balanced 12-02/results_summary.csv", sep=';')
-    df_weighted = pd.read_csv("mia-result/Exagerated Imbalance 12-02/results_summary.csv", sep=';')
+    df_weighted_large = pd.read_csv("mia-result/Weighted large 12-03/results_summary.csv", sep=';')
+    df_weighted_small = pd.read_csv("mia-result/Weighted small 12-03/results_summary.csv", sep=';')
 
+    
     models = {
         "Normal": df_normal,
         "Balanced": df_balanced,
-        "Weighted": df_weighted
+        "Weighted large": df_weighted_large, 
+        "Weighted small" : df_weighted_small,
     }
 
     if not os.path.isdir("stats"):
@@ -50,20 +53,20 @@ def stats(metric):
     for name, df in models.items():
         overall[name] = to_matrix(df, metric).mean()
 
-    overall_df = pd.DataFrame.from_dict(overall, orient="index", columns=[f"Macro-{metric}"])
-    print("\n=== Macro-level Performance ===")
+    overall_df = pd.DataFrame.from_dict(overall, orient="index", columns=[f"Overall-{metric}"])
+    print("\n=== Overall-level Performance ===")
     print(overall_df)
 
-    overall_df.plot(kind="bar", legend=False, title=f"Overall Macro-{metric}")
+    overall_df.plot(kind="bar", legend=False, title=f"Overall -{metric}")
     plt.ylabel(metric)
     plt.tight_layout()
     plt.savefig(f"stats/overall_comparison_{metric}.png")
     plt.close()
 
     comparisons = [
-        ("Normal", "Balanced"),
-        ("Normal", "Weighted"),
-        ("Balanced", "Weighted")
+        ("Balanced", "Weighted large"),
+        ("Balanced", "Weighted small"),
+        ("Weighted small", "Weighted large")
     ]
 
     print("\n=== Wilcoxon Signed-Rank Tests Per-Label ===")
@@ -72,20 +75,28 @@ def stats(metric):
         print(f"{a} vs {b}: stat={stat:.3f}, p={p:.4f}")
 
     #heatmap with absolute values
-    diff = (to_matrix(df_balanced, metric) - to_matrix(df_normal, metric)).to_frame("Diff")
+    diff = (to_matrix(df_balanced, metric) - to_matrix(df_weighted_large, metric)).to_frame("Diff")
     plt.figure(figsize=(6,4))
     sns.heatmap(diff, annot=True, cmap="coolwarm", center=0)
-    plt.title(f"Balanced - Normal ({metric})")
+    plt.title(f"Balanced - Weighted large ({metric})")
     plt.tight_layout()
-    plt.savefig(f"stats/heatmap_balanced_vs_normal_{metric}.png")
+    plt.savefig(f"stats/heatmap_balanced_vs_weighted_large_{metric}.png")
     plt.close()
 
-    diff2 = (to_matrix(df_weighted, metric) - to_matrix(df_normal, metric)).to_frame("Diff")
+    diff2 = (to_matrix(df_balanced, metric) - to_matrix(df_weighted_small, metric)).to_frame("Diff")
     plt.figure(figsize=(6,4))
     sns.heatmap(diff2, annot=True, cmap="coolwarm", center=0)
-    plt.title(f"Weighted - Normal ({metric})")
+    plt.title(f"Balanced - Weighted small ({metric})")
     plt.tight_layout()
-    plt.savefig(f"stats/heatmap_weighted_vs_normal_{metric}.png")
+    plt.savefig(f"stats/heatmap_balanced_vs_weighted_small_{metric}.png")
+    plt.close()
+
+    diff2 = (to_matrix(df_weighted_small, metric) - to_matrix(df_weighted_large, metric)).to_frame("Diff")
+    plt.figure(figsize=(6,4))
+    sns.heatmap(diff2, annot=True, cmap="coolwarm", center=0)
+    plt.title(f"Weighted small - Weighted large ({metric})")
+    plt.tight_layout()
+    plt.savefig(f"stats/heatmap_weighted_small_vs_large{metric}.png")
     plt.close()
 
     #normalised heatmap

@@ -164,13 +164,20 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
                                                     n_estimators=100, 
                                                     max_depth=50, 
                                                     class_weight="balanced")
-    elif random_forest_type=="Extra_imbalance":
+    elif random_forest_type=="Weighted_large":
         #forest for class balanced version
-        print('-' * 5, 'Using exagerated imbalanced random forest')
+        print('-' * 5, 'Using random forest weighted to large classes')
         forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
                                                     n_estimators=100, 
                                                     max_depth=50, 
-                                                    class_weight={1:5, 2:5})
+                                                    class_weight={1:10, 2:10})
+    elif random_forest_type=="Weighted_small":
+        #forest for class balanced version
+        print('-' * 5, 'Using random forest weighted to small classes')
+        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                    n_estimators=100, 
+                                                    max_depth=50, 
+                                                    class_weight={3:5, 4:5, 5:5})
     
     elif random_forest_type=="Standard":
         forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
