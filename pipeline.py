@@ -309,7 +309,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             manipulated_shrink = run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_shrink",
-                lambda x: shrink_boundary(x, radius=0.5)
+                lambda x: shrink_boundary(x)
             )
             evaluator.evaluate(
                 manipulated_shrink, gt_reg,
@@ -321,7 +321,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_removeDist",
                 lambda x: remove_far_voxels( x,
-                frac_per_label={  # tune these if you want!
+                frac_per_label={  # tune these
                     1: 0.95,  # WM  keep 95% of radial extent
                     2: 0.95,  # GM
                     3: 0.70,  # Hippocampus
