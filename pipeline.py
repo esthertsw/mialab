@@ -15,6 +15,7 @@ from sklearn.model_selection import GridSearchCV
 import numpy as np
 import pymia.data.conversion as conversion
 import pymia.evaluation.writer as writer
+import pickle
 
 import matplotlib.pyplot as plt
 
@@ -70,7 +71,7 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
                 voxel_counts[c] = count
     return voxel_counts
 
-def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool):
+def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool):
     """Brain tissue segmentation using decision forests.
 
     The main routine executes the medical image analysis pipeline:
@@ -102,7 +103,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     pre_process_params = {'skullstrip_pre': True,
                           'normalization_pre': True,
                           'registration_pre': True,
-                        #   'brain_mask_morph': True,
                           'coordinates_feature': True,
                           'intensity_feature': True,
                           'gradient_intensity_feature': True
@@ -148,55 +148,54 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # Couting voxel proportions
     train_voxel_counts = count_voxels_per_class(images)
     
-    # =================================
-    # Beginning Debugging features
-    # =================================
-    # example_img = images[0]
-    # feat = example_img.feature_matrix[0]
-    #
-    # print("feature [0] shape", example_img.feature_matrix[0].shape)
-    # print("feature [1] shape", example_img.feature_matrix[1].shape)
-    # =================================
-    # End Debugging features
-    # =================================
+    if not load_model or not f'{random_forest_type.lower()}_model.pkl' in os.listdir('weights'): # store weights if not available
+        print("Training model")
+        if random_forest_type=="GridSearch":
+            print('-' * 5, 'Running GridSearch')
+            params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
+            model = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
+            forest = GridSearchCV(model, params, cv=3)
+        elif random_forest_type=="Balanced":
+            #forest for class balanced version
+            print('-' * 5, 'Using balanced random forest')
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=100, 
+                                                        max_depth=50, 
+                                                        class_weight="balanced")
+        elif random_forest_type=="Weighted_large":
+            #forest for class balanced version
+            print('-' * 5, 'Using random forest weighted to large classes')
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=100, 
+                                                        max_depth=50, 
+                                                        class_weight={1:10, 2:10})
+        elif random_forest_type=="Weighted_small":
+            #forest for class balanced version
+            print('-' * 5, 'Using random forest weighted to small classes')
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=100, 
+                                                        max_depth=50, 
+                                                        class_weight={3:5, 4:5, 5:5})
+        
+        elif random_forest_type=="Standard":
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=150, 
+                                                        max_depth=40)
+        
 
-    if random_forest_type=="GridSearch":
-        print('-' * 5, 'Running GridSearch')
-        params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
-        model = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
-        forest = GridSearchCV(model, params, cv=3)
-    elif random_forest_type=="Balanced":
-        #forest for class balanced version
-        print('-' * 5, 'Using balanced random forest')
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=100, 
-                                                    max_depth=50, 
-                                                    class_weight="balanced")
-    elif random_forest_type=="Weighted_large":
-        #forest for class balanced version
-        print('-' * 5, 'Using random forest weighted to large classes')
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=100, 
-                                                    max_depth=50, 
-                                                    class_weight={1:10, 2:10})
-    elif random_forest_type=="Weighted_small":
-        #forest for class balanced version
-        print('-' * 5, 'Using random forest weighted to small classes')
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=100, 
-                                                    max_depth=50, 
-                                                    class_weight={3:5, 4:5, 5:5})
-    
-    elif random_forest_type=="Standard":
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=150, 
-                                                    max_depth=40)
-    
+        start_time = timeit.default_timer()
+        forest.fit(data_train, labels_train)
+        print(' Time elapsed:', timeit.default_timer() - start_time, 's')
+        #print(' GridSearch best parameters: ', forest.best_params_)
 
-    start_time = timeit.default_timer()
-    forest.fit(data_train, labels_train)
-    print(' Time elapsed:', timeit.default_timer() - start_time, 's')
-    #print(' GridSearch best parameters: ', forest.best_params_)
+        if save_model_weights:
+            with open(f'weights/{random_forest_type.lower()}_model.pkl','wb') as f:
+                pickle.dump(forest,f)
+            print(random_forest_type, ' Model saved.')
+    elif load_model: 
+        with open(f'weights/{random_forest_type.lower()}_model.pkl','rb') as f:
+            forest = pickle.load(f)
+        print(random_forest_type, ' Model loaded.')
 
     print('-' * 5, 'Testing...')
 
@@ -416,12 +415,24 @@ if __name__ == "__main__":
         default="Standard",
         help='Specify whether to run random forest with GridSearch or Balanced classes'
     )
+
+    parser.add_argument(
+        '--load_model_weights',
+        action='store_true',
+        help='Include if stored model should be used (if available) instead of training'
+    )
+
+    parser.add_argument(
+        '--save_model_weights',
+        action='store_true',
+        help='Save model weights after training'
+    )
     
     parser.add_argument(
-    '--run_metric_tricks',
-    action='store_true',
-    help='Run metric manipulation experiments (largest CC, shrink, distance trimming)'
-)
+        '--run_metric_tricks',
+        action='store_true',
+        help='Run metric manipulation experiments (largest CC, shrink, distance trimming)'
+    )
 
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.load_model_weights, args.save_model_weights)
