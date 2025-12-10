@@ -19,18 +19,11 @@ import pickle
 
 import matplotlib.pyplot as plt
 
-from mialab.utilities.metric_tricks import (
-                run_metric_trick_experiment,
-                keep_largest_cc,
-                shrink_boundary,
-                remove_far_voxels
-            )
-from mialab.utilities.metric_tricks import plot_trick_summary_boxplot, load_trick_results
-
 try:
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
+    import mialab.utilities.metric_tricks as mutil
 except ImportError:
     # Append the MIALab root directory to Python path
     sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[0]), '..'))
@@ -294,10 +287,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             gt_reg = img.images[structure.BrainImageTypes.GroundTruth]
 
             # Trick 1: Largest CC only
-            manipulated_lcc = run_metric_trick_experiment(
+            manipulated_lcc = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_largestCC",
-                keep_largest_cc
+                mutil.keep_largest_cc
             )
             evaluator.evaluate(
                 manipulated_lcc, gt_reg,
@@ -305,10 +298,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             )
 
             # Trick 2: Shrink boundary
-            manipulated_shrink = run_metric_trick_experiment(
+            manipulated_shrink = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_shrink",
-                lambda x: shrink_boundary(x, radius=0.5)
+                lambda x: mutil.shrink_boundary(x, radius=0.5)
             )
             evaluator.evaluate(
                 manipulated_shrink, gt_reg,
@@ -316,23 +309,34 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             )
 
             # Trick 3: Remove far voxels
-            manipulated_remove = run_metric_trick_experiment(
+            manipulated_remove = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_removeDist",
-                lambda x: remove_far_voxels( x,
-                frac_per_label={  # tune these if you want!
-                    1: 0.95,  # WM  keep 95% of radial extent
-                    2: 0.95,  # GM
-                    3: 0.70,  # Hippocampus
-                    4: 0.70,  # Amygdala
-                    5: 0.80,  # Thalamus
-                },
-        default_frac=0.8
-    )
+                lambda x: mutil.remove_far_voxels( x,
+                            frac_per_label={  # tune these if you want!
+                                1: 0.95,  # WM  keep 95% of radial extent
+                                2: 0.95,  # GM
+                                3: 0.70,  # Hippocampus
+                                4: 0.70,  # Amygdala
+                                5: 0.80,  # Thalamus
+                            },
+                    default_frac=0.8
+                )
             )   
             evaluator.evaluate(
                 manipulated_remove, gt_reg,
                 img.id_ + "-TRICK-removeDist"
+            )
+
+            # Trick 4: Morphological closing on labeled voxels
+            manipulated_closed = mutil.run_metric_trick_experiment(
+                seg_pp, gt_reg, tricks_out,
+                f"{img.id_}_morphClose",
+                lambda x: mutil.mask_dilation_and_erosion(x, result_dir=None, img_id=None) # NOTE result_dir and img.id_ required only if you want to save the img after labels are changed
+            ) 
+            evaluator.evaluate(
+                manipulated_closed, gt_reg,
+                img.id_ + "-TRICK-morphClose"
             )
 
         # save results
@@ -343,7 +347,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         sitk.WriteImage(img.images[structure.BrainImageTypes.T2w], os.path.join(result_dir, images_test[i].id_ + '_T2w_reg.mha'), True)        
 
     # use two writers to report the results
-    os.makedirs(result_dir, exist_ok=True)  # generate result directory, if it does not exists
     result_file = os.path.join(result_dir, 'results.csv')
     writer.CSVWriter(result_file).write(evaluator.results)
 
@@ -364,10 +367,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         print("\nGenerating trick-summary boxplots...")
 
         # Load all trick CSV results into a dataframe
-        df = load_trick_results(tricks_dir)
+        df = mutil.load_trick_results(tricks_dir)
 
         # Create summary plots (one figure per trick)
-        plot_trick_summary_boxplot(df, tricks_dir)
+        mutil.plot_trick_summary_boxplot(df, tricks_dir)
 
         print("Trick summary plots saved in:", tricks_dir)
         

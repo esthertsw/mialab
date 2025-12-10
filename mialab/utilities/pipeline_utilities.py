@@ -195,12 +195,6 @@ def pre_process(id_: str, paths: dict, **kwargs) -> structure.BrainImage:
         pipeline_brain_mask.set_param(fltr_prep.ImageRegistrationParameters(atlas_t1, img.transformation),
                                       len(pipeline_brain_mask.filters) - 1)
     
-    # Fill holes in brain mask
-    if kwargs.get('brain_mask_morph', False):
-        pipeline_brain_mask.add_filter(fltr_prep.BrainMaskMorphing())
-        pipeline_brain_mask.set_param(fltr_prep.BrainMaskMorphingParameters(kwargs.get('morph_radius', 9)),
-                           len(pipeline_brain_mask.filters) - 1)
-        
     # execute pipeline on the brain mask image
     img.images[structure.BrainImageTypes.BrainMask] = pipeline_brain_mask.execute(
         img.images[structure.BrainImageTypes.BrainMask])
@@ -308,19 +302,18 @@ def init_evaluator() -> eval_.Evaluator:
     metrics = [
               # Overlap-based
               metric.DiceCoefficient(),
-              metric.JaccardCoefficient(), # Added Jaccard Coefficient
+              metric.JaccardCoefficient(),
 
               # Volume-based
-              metric.VolumeSimilarity(),  # Added Volume Similarity
+              metric.VolumeSimilarity(),
               # Distance-based
               metric.HausdorffDistance(percentile=95, metric='HDRFDST'),
-              metric.AverageDistance(), # Added Average Surface Distance
+              metric.AverageDistance(),
               # metric.SurfaceDistance(percentile=95), # Added Surface Distance
               # Classification
-              metric.Precision(), # Added Precision
-              metric.Specificity(), # Added Specificity
-              metric.Accuracy(), # Added Accuracy
-              # Information-theoretic
+              metric.Precision(),
+              metric.Specificity(),
+              metric.Accuracy()
                ]
 
     # define the labels to evaluate
