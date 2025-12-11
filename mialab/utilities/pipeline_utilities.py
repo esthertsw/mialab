@@ -291,7 +291,7 @@ def post_process(img: structure.BrainImage, segmentation: sitk.Image, probabilit
     return pipeline.execute(segmentation)
 
     
-def init_evaluator() -> eval_.Evaluator:
+def init_evaluator(labels=None) -> eval_.Evaluator:
     """Initializes an evaluator.
 
     Returns:
@@ -317,12 +317,13 @@ def init_evaluator() -> eval_.Evaluator:
                ]
 
     # define the labels to evaluate
-    labels = {1: 'WhiteMatter',
-              2: 'GreyMatter',
-              3: 'Hippocampus',
-              4: 'Amygdala',
-              5: 'Thalamus'
-              }
+    if labels is None:
+        labels = {1: 'WhiteMatter',
+                2: 'GreyMatter',
+                3: 'Hippocampus',
+                4: 'Amygdala',
+                5: 'Thalamus'
+                }
 
     evaluator = eval_.SegmentationEvaluator(metrics, labels)
     return evaluator

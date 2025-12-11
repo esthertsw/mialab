@@ -164,6 +164,22 @@ def mask_dilation_and_erosion(seg: sitk.Image, result_dir=None, img_id=None):
         # sitk.WriteImage(out_img, os.path.join(result_dir, img_id + '_TRICKED_morph_closed.mha'), True)
     return out_img
 
+def relabel(seg: sitk.Image, gt: sitk.Image):
+    std_to_new_label_mapping = { # original label names kept for visibility
+            3: [6, "Hippocampus"],
+            4: [6, "Amygdala"],
+            5: [6,"Thalamus"],
+        } # where 6 = "SmallStructures"
+     
+    imgs = [seg, gt]
+    for idx, img in enumerate(imgs):
+        img_as_np = to_np(img)
+        for label, mapping in std_to_new_label_mapping.items():
+            mask = (img_as_np == label).astype(np.uint8)
+            img_as_np[mask] = mapping[0] # re-assign to new label value
+        imgs[idx] = (sitk.GetImageFromArray(img_as_np)).CopyInformation(img)
+    return imgs
+
 
 # Metric evaluation
 def get_metrics():
@@ -177,19 +193,22 @@ def get_metrics():
     ]
 
 
-def evaluate(pred: sitk.Image, gt: sitk.Image):
+def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=None):
     """
     Evaluate a prediction against ground truth using the same style
     of metrics/labels as the main pipeline.
     """
     # Label mapping consistent with pipeline_utilities.init_evaluator()
-    labels = {
-        1: "WhiteMatter",
-        2: "GreyMatter",
-        3: "Hippocampus",
-        4: "Amygdala",
-        5: "Thalamus",
-    }
+    if relabeled: # To allow for the assessment of labels with changed granularity
+        labels = relabeled
+    else:
+        labels = {
+            1: "WhiteMatter",
+            2: "GreyMatter",
+            3: "Hippocampus",
+            4: "Amygdala",
+            5: "Thalamus",
+        }
 
     evaluator = SegmentationEvaluator(get_metrics(), labels)
     evaluator.evaluate(pred, gt, "exp")
@@ -237,6 +256,8 @@ def run_metric_trick_experiment(
     os.makedirs(outdir, exist_ok=True)
 
     # Apply trick
+    if trick_fn == relabel: # Special case if relabeling is done, GT needs to be relabeled too
+        manipulated, gt_relabeled = trick_fn(seg,gt)
     manipulated = trick_fn(seg)
 
     # Save images
@@ -245,7 +266,7 @@ def run_metric_trick_experiment(
 
     # Evaluate original vs manipulated
     orig_results = evaluate(seg, gt)
-    trick_results = evaluate(manipulated, gt)
+    trick_results = evaluate(manipulated, gt_relabeled if trick_fn == relabel else gt, relabeled=True if trick_fn == relabel else False)
 
     csv_path = os.path.join(outdir, f"{name}_metrics.csv")
     with open(csv_path, "w") as f:
@@ -262,7 +283,7 @@ def run_metric_trick_experiment(
 
 
 
-    return manipulated
+    return manipulated if trick_fn != relabel else manipulated, gt_relabeled
 
 import pandas as pd
 import os

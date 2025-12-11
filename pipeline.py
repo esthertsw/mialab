@@ -339,6 +339,20 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
                 img.id_ + "-TRICK-morphClose"
             )
 
+            # Trick 5: Adjusted label granularity
+            seg_relabeled, gt_relabeled = mutil.run_metric_trick_experiment(
+                seg_pp, gt_reg, tricks_out,
+                f"{img.id_}_relabeled",
+                lambda x,y: mutil.relabel(x,y)
+            )
+            
+            new_labels = {1:"WhiteMatter", 2:"GreyMatter", 6:"SmallStructures"}  #new label as 6 to avoid accidental clashes with original labels
+            relabeled_evaluator = putil.init_evaluator(new_labels)
+            relabeled_evaluator.evaluate(
+                seg_relabeled, gt_relabeled,
+                img.id_ + "-TRICK-relabeled"
+            )
+
         # save results
         sitk.WriteImage(images_prediction[i], os.path.join(result_dir, images_test[i].id_ + '_SEG.mha'), True)
         sitk.WriteImage(images_post_processed[i], os.path.join(result_dir, images_test[i].id_ + '_SEG-PP.mha'), True)
