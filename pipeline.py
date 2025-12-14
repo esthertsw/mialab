@@ -19,6 +19,7 @@ import pickle
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from sklearn.metrics import confusion_matrix, precision_score
 
 from mialab.utilities.metric_tricks import (
                 run_metric_trick_experiment,
@@ -74,31 +75,19 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
     return voxel_counts
 
 #Following functions are for overall metric computation
-def compute_confusion(pred, gt, labels):
-    TP = FP = TN = FN = 0
-    for l in labels:
-        TP += np.sum((pred == l) & (gt == l))
-        FP += np.sum((pred == l) & (gt != l))
-        FN += np.sum((pred != l) & (gt == l))
-        TN += np.sum((pred != l) & (gt != l))
-    return TP, FP, TN, FN
+def precision_overall(pred, gt):
+    precision_macro = precision_score(gt, pred,average='macro')
+    precision_weighted = precision_score(gt, pred,average='weighted')
+    return precision_macro, precision_weighted
 
-def dice_from_confusion(TP, FP, FN):
-    return 2 * TP / (2 * TP + FP + FN) if (2 * TP + FP + FN) > 0 else np.nan
+def accuracy_confusion(pred, gt):
+    cm = confusion_matrix(gt, pred, labels=[0,1,2,3,4,5])
+    tp = np.trace(cm) 
+    total = np.sum(cm)
 
-def jaccard_from_confusion(TP, FP, FN):
-    return TP / (TP + FP + FN) if (TP + FP + FN) > 0 else np.nan
+    return tp, total
 
-def precision_from_confusion(TP, FP):
-    return TP / (TP + FP) if (TP + FP) > 0 else np.nan
-
-def specificity_from_confusion(TN, FP):
-    return TN / (TN + FP) if (TN + FP) > 0 else np.nan
-
-def accuracy_from_confusion(TP, TN, FP, FN):
-    return (TP + TN) / (TP + TN + FP + FN)
-
-def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool, extra_eval_acc: bool):
+def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool, overall_eval: bool):
     """Brain tissue segmentation using decision forests.
 
     The main routine executes the medical image analysis pipeline:
@@ -319,30 +308,37 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     images_post_processed = putil.post_process_batch(images_test, images_prediction, images_probabilities,
                                                      post_process_params, multi_process=False)
 
-    if extra_eval_acc:
+    if overall_eval:
         global_TP = global_FP = global_TN = global_FN = 0
-        labels_eval = [1, 2, 3, 4, 5]
         dice_vals = []
         jacc_vals = []
         vs_vals = []
         hd95_vals = []
         avg_dist_vals = []
+        tp = 0
+        total = 0
+        pre_macro_vals = []
+        pre_weighted_vals = []
 
     for i, img in enumerate(images_test):
         evaluator.evaluate(images_post_processed[i], img.images[structure.BrainImageTypes.GroundTruth],
                            img.id_ + '-PP')
         
-        if extra_eval_acc:
-            pred = sitk.GetArrayFromImage(images_post_processed[i])
-            gt   = sitk.GetArrayFromImage(img.images[structure.BrainImageTypes.GroundTruth])
+        if overall_eval:
+            pred = sitk.GetArrayFromImage(images_post_processed[i]).flatten()
+            gt   = sitk.GetArrayFromImage(img.images[structure.BrainImageTypes.GroundTruth]).flatten()
             pred_img = images_post_processed[i]
             gt_img   = img.images[structure.BrainImageTypes.GroundTruth]
-        
-            TP, FP, TN, FN = compute_confusion(pred, gt, labels_eval)
-            global_TP += TP
-            global_FP += FP
-            global_TN += TN
-            global_FN += FN
+            pred_img = sitk.Cast(pred_img, sitk.sitkUInt8)
+            gt_img   = sitk.Cast(gt_img, sitk.sitkUInt8)
+
+            precision_macro, precision_weighted = precision_overall(pred, gt)
+            pre_macro_vals.append(precision_macro)
+            pre_weighted_vals.append(precision_weighted)
+
+            tp_image, total_image = accuracy_confusion(pred, gt)
+            tp += tp_image
+            total += total_image
 
             dice = sitk.LabelOverlapMeasuresImageFilter()
             dice.Execute(pred_img, gt_img)
@@ -353,10 +349,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             hd = sitk.HausdorffDistanceImageFilter()
             hd.Execute(pred_img, gt_img)
             hd95_vals.append(hd.GetHausdorffDistance())
-
-            sd = sitk.SurfaceDistanceImageFilter()
-            sd.Execute(pred_img, gt_img)
-            avg_dist_vals.append(np.mean(sd.GetSurfaceDistances()))
 
         # Run metric-trick experiments (OPTIONAL)
         if run_metric_tricks:
@@ -443,25 +435,24 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, images_test[i].id_ + '_T1w_reg.mha'), True)
         sitk.WriteImage(img.images[structure.BrainImageTypes.T2w], os.path.join(result_dir, images_test[i].id_ + '_T2w_reg.mha'), True)        
 
-    if extra_eval_acc:
+    if overall_eval:
         dice_global = np.mean(dice_vals)
         jacc_global = np.mean(jacc_vals)
         vs_global   = np.mean(vs_vals)
         hd95_global = np.mean(hd95_vals)
         avgd_global = np.mean(avg_dist_vals)
 
-        precision_global = precision_from_confusion(global_TP, global_FP)
-        specificity_global = specificity_from_confusion(global_TN, global_FP)
-        accuracy_global = accuracy_from_confusion(global_TP, global_TN, global_FP, global_FN)
+        accuracy_global = tp/total
+        precision_macro_global = np.mean(pre_macro_vals)
+        precision_weighted_global = np.mean(pre_weighted_vals)
 
         global_metrics = pd.DataFrame([{
             "DICE": dice_global,
             "JACRD": jacc_global,
             "VOLSMTY": vs_global,
             "HDRFDST": hd95_global,
-            "AVGDIST": avgd_global,
-            "PRCISON": precision_global,
-            "SPCFTY": specificity_global,
+            "PRCISON1": precision_macro_global,
+            "PRCISON2": precision_weighted_global,
             "ACURCY": accuracy_global
         }])
 
@@ -560,10 +551,10 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        '--extra_eval_acc',
+        '--overall_eval',
         action='store_true',
         help='Run additional eval with masked background'
     )
 
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.load_model_weights, args.save_model_weights, args.extra_eval_acc)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.load_model_weights, args.save_model_weights, args.overall_eval)

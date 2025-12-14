@@ -21,14 +21,14 @@ def stats_pair(df1, df2, metric):
 
 def stats(metric):
 
-    df_normal = pd.read_csv("mia-result/Standard 12-02/results.csv", sep=';')
-    df_balanced = pd.read_csv("mia-result/Balanced 12-02/results.csv", sep=';')
-    df_weighted_large = pd.read_csv("mia-result/Weighted_large 12-03/results.csv", sep=';')
-    df_weighted_small = pd.read_csv("mia-result/Weighted_small 12-03/results.csv", sep=';')
-    df_overall_metrics_n = pd.read_csv("mia-result/Standard 12-02/global_metrics.csv", sep=';')
-    df_overall_metrics_b = pd.read_csv("mia-result/Balanced 12-02/global_metrics.csv", sep=';')
-    df_overall_metrics_wl = pd.read_csv("mia-result/Weighted_large 12-03/global_metrics.csv", sep=';')
-    df_overall_metrics_ws = pd.read_csv("mia-result/Weighted_small 12-03/global_metrics.csv", sep=';')
+    df_normal = pd.read_csv("mia-result/Standard 12-14/results.csv", sep=';')
+    df_balanced = pd.read_csv("mia-result/Balanced 12-14/results.csv", sep=';')
+    df_weighted_large = pd.read_csv("mia-result/Weighted_large 12-14/results.csv", sep=';')
+    df_weighted_small = pd.read_csv("mia-result/Weighted_small 12-14/results.csv", sep=';')
+    df_overall_metrics_n = pd.read_csv("mia-result/Standard 12-14/global_metrics.csv", sep=';')
+    df_overall_metrics_b = pd.read_csv("mia-result/Balanced 12-14/global_metrics.csv", sep=';')
+    df_overall_metrics_wl = pd.read_csv("mia-result/Weighted_large 12-14/global_metrics.csv", sep=';')
+    df_overall_metrics_ws = pd.read_csv("mia-result/Weighted_small 12-14/global_metrics.csv", sep=';')
     
     models = {
         "Normal": {
