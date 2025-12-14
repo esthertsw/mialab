@@ -17,6 +17,7 @@ import pymia.data.conversion as conversion
 import pymia.evaluation.writer as writer
 
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from mialab.utilities.metric_tricks import (
                 run_metric_trick_experiment,
@@ -70,7 +71,7 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
                 voxel_counts[c] = count
     return voxel_counts
 
-def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool):
+def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, extra_eval_acc: bool):
     """Brain tissue segmentation using decision forests.
 
     The main routine executes the medical image analysis pipeline:
@@ -178,14 +179,14 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
                                                     n_estimators=100, 
                                                     max_depth=50, 
-                                                    class_weight={1:10, 2:10})
+                                                    class_weight={1:10, 2:10, 3:0.1, 4:0.1, 5:0.1})
     elif random_forest_type=="Weighted_small":
         #forest for class balanced version
         print('-' * 5, 'Using random forest weighted to small classes')
         forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
                                                     n_estimators=100, 
                                                     max_depth=50, 
-                                                    class_weight={3:5, 4:5, 5:5})
+                                                    class_weight={1:0.1, 2:0.1, 3:10, 4:10, 5:10})
     
     elif random_forest_type=="Standard":
         forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
@@ -277,14 +278,52 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     images_post_processed = putil.post_process_batch(images_test, images_prediction, images_probabilities,
                                                      post_process_params, multi_process=False)
 
+    if extra_eval_acc:
+        all_acc_with_bg = []
+        all_acc_no_bg = []
+        correct_total_with_bg = 0
+        voxel_total_with_bg = 0
+        correct_total_no_bg = 0
+        voxel_total_no_bg = 0
+        labels = [0,1,2,3,4,5]
+        labels_no_bg = [1,2,3,4,5]            
+
     for i, img in enumerate(images_test):
         evaluator.evaluate(images_post_processed[i], img.images[structure.BrainImageTypes.GroundTruth],
                            img.id_ + '-PP')
         
-        # Run metric-trick experiments (OPTIONAL)
+        if extra_eval_acc:
+            pred = sitk.GetArrayFromImage(images_post_processed[i])
+            gt   = sitk.GetArrayFromImage(img.images[structure.BrainImageTypes.GroundTruth])
         
-        if run_metric_tricks:
+            per_label_acc_with_bg = {}
 
+            correct_total_with_bg += np.sum(pred == gt)
+            voxel_total_with_bg += gt.size
+
+            for label in labels:
+                mask = (gt == label)
+                if mask.sum() > 0:
+                    acc = np.mean(pred[mask] == gt[mask])
+                    per_label_acc_with_bg[label] = acc
+
+            all_acc_with_bg.append(per_label_acc_with_bg)
+            per_label_acc_no_bg = {}
+
+            mask = (gt !=0)
+            correct_total_no_bg += np.sum(pred[mask] == gt[mask])
+            voxel_total_no_bg += np.sum(mask)
+
+            for label in labels_no_bg:
+                mask = (gt == label)
+                if mask.sum() > 0:
+                    acc = np.mean(pred[mask] == gt[mask])
+                    per_label_acc_no_bg[label] = acc
+
+            all_acc_no_bg.append(per_label_acc_no_bg)
+
+        # Run metric-trick experiments (OPTIONAL)
+        if run_metric_tricks:
 
             tricks_out = os.path.join(result_dir, "metric_tricks")
             os.makedirs(tricks_out, exist_ok=True)
@@ -328,8 +367,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
                     4: 0.70,  # Amygdala
                     5: 0.80,  # Thalamus
                 },
-        default_frac=0.8
-    )
+        default_frac=0.8)
             )   
             evaluator.evaluate(
                 manipulated_remove, gt_reg,
@@ -342,6 +380,17 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         sitk.WriteImage(img.images[structure.BrainImageTypes.GroundTruth], os.path.join(result_dir, images_test[i].id_ + '_GT_reg.mha'), True)
         sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, images_test[i].id_ + '_T1w_reg.mha'), True)
         sitk.WriteImage(img.images[structure.BrainImageTypes.T2w], os.path.join(result_dir, images_test[i].id_ + '_T2w_reg.mha'), True)        
+
+    if extra_eval_acc:
+        df_with_bg = pd.DataFrame(all_acc_with_bg)
+        df_no_bg   = pd.DataFrame(all_acc_no_bg)
+
+        global_accuracy_with_bg = correct_total_with_bg / voxel_total_with_bg
+        global_accuracy_no_bg = correct_total_no_bg / voxel_total_no_bg
+
+        df_with_bg.to_csv(os.path.join(result_dir,"accuracy_with_background.csv"))
+        df_no_bg.to_csv(os.path.join(result_dir,"accuracy_no_background.csv"))
+
 
     # use two writers to report the results
     os.makedirs(result_dir, exist_ok=True)  # generate result directory, if it does not exists
@@ -418,10 +467,16 @@ if __name__ == "__main__":
     )
     
     parser.add_argument(
-    '--run_metric_tricks',
-    action='store_true',
-    help='Run metric manipulation experiments (largest CC, shrink, distance trimming)'
-)
+        '--run_metric_tricks',
+        action='store_true',
+        help='Run metric manipulation experiments (largest CC, shrink, distance trimming)'
+    )
+
+    parser.add_argument(
+        '--extra_eval_acc',
+        action='store_true',
+        help='Run additional eval with masked background'
+    )
 
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.extra_eval_acc)
