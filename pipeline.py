@@ -343,8 +343,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             seg_relabeled, gt_relabeled = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_relabeled",
-                lambda x,y: mutil.relabel(x,y)
+                mutil.relabel,
+                needs_gt=True
             )
+            sitk.WriteImage(seg_relabeled, os.path.join(result_dir, img.id_ + '_relabeled.mha'), True)
             
             new_labels = {1:"WhiteMatter", 2:"GreyMatter", 6:"SmallStructures"}  #new label as 6 to avoid accidental clashes with original labels
             relabeled_evaluator = putil.init_evaluator(new_labels)
@@ -380,11 +382,16 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
         print("\nGenerating trick-summary boxplots...")
 
-        # Load all trick CSV results into a dataframe
+        # Load all trick CSV results into a dataframe except for relabeled ones
         df = mutil.load_trick_results(tricks_dir)
 
         # Create summary plots (one figure per trick)
         mutil.plot_trick_summary_boxplot(df, tricks_dir)
+
+        # Load relabeled CSV results
+        df = mutil.load_trick_results(tricks_dir, relabeled=True)
+        # Create summary plot
+        mutil.plot_relabeled_summary_boxplots(df, tricks_dir)
 
         print("Trick summary plots saved in:", tricks_dir)
         

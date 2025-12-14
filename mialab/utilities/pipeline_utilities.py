@@ -324,7 +324,7 @@ def init_evaluator(labels=None) -> eval_.Evaluator:
                 4: 'Amygdala',
                 5: 'Thalamus'
                 }
-
+    print("Evaluator labels used: ", labels.values())
     evaluator = eval_.SegmentationEvaluator(metrics, labels)
     return evaluator
 
