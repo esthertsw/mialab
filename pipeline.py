@@ -15,6 +15,7 @@ from sklearn.model_selection import GridSearchCV
 import numpy as np
 import pymia.data.conversion as conversion
 import pymia.evaluation.writer as writer
+import pickle
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -31,6 +32,7 @@ try:
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
+    import mialab.utilities.metric_tricks as mutil
 except ImportError:
     # Append the MIALab root directory to Python path
     sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[0]), '..'))
@@ -71,7 +73,7 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
                 voxel_counts[c] = count
     return voxel_counts
 
-def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, extra_eval_acc: bool):
+def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool, extra_eval_acc: bool):
     """Brain tissue segmentation using decision forests.
 
     The main routine executes the medical image analysis pipeline:
@@ -103,7 +105,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     pre_process_params = {'skullstrip_pre': True,
                           'normalization_pre': True,
                           'registration_pre': True,
-                        #   'brain_mask_morph': True,
                           'coordinates_feature': True,
                           'intensity_feature': True,
                           'gradient_intensity_feature': True
@@ -149,55 +150,54 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # Couting voxel proportions
     train_voxel_counts = count_voxels_per_class(images)
     
-    # =================================
-    # Beginning Debugging features
-    # =================================
-    # example_img = images[0]
-    # feat = example_img.feature_matrix[0]
-    #
-    # print("feature [0] shape", example_img.feature_matrix[0].shape)
-    # print("feature [1] shape", example_img.feature_matrix[1].shape)
-    # =================================
-    # End Debugging features
-    # =================================
+    if not load_model or not f'{random_forest_type.lower()}_model.pkl' in os.listdir('weights'): # store weights if not available
+        print("Training model")
+        if random_forest_type=="GridSearch":
+            print('-' * 5, 'Running GridSearch')
+            params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
+            model = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
+            forest = GridSearchCV(model, params, cv=3)
+        elif random_forest_type=="Balanced":
+            #forest for class balanced version
+            print('-' * 5, 'Using balanced random forest')
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=100, 
+                                                        max_depth=50, 
+                                                        class_weight="balanced")
+        elif random_forest_type=="Weighted_large":
+            #forest for class balanced version
+            print('-' * 5, 'Using random forest weighted to large classes')
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=100, 
+                                                        max_depth=50, 
+                                                        class_weight={1:10, 2:10})
+        elif random_forest_type=="Weighted_small":
+            #forest for class balanced version
+            print('-' * 5, 'Using random forest weighted to small classes')
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=100, 
+                                                        max_depth=50, 
+                                                        class_weight={3:5, 4:5, 5:5})
+        
+        elif random_forest_type=="Standard":
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=150, 
+                                                        max_depth=40)
+        
 
-    if random_forest_type=="GridSearch":
-        print('-' * 5, 'Running GridSearch')
-        params = {'n_estimators': [50, 75, 100, 125, 150], 'max_depth':[10, 20, 30, 40, 50]}
-        model = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1])
-        forest = GridSearchCV(model, params, cv=3)
-    elif random_forest_type=="Balanced":
-        #forest for class balanced version
-        print('-' * 5, 'Using balanced random forest')
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=100, 
-                                                    max_depth=50, 
-                                                    class_weight="balanced")
-    elif random_forest_type=="Weighted_large":
-        #forest for class balanced version
-        print('-' * 5, 'Using random forest weighted to large classes')
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=100, 
-                                                    max_depth=50, 
-                                                    class_weight={1:10, 2:10, 3:0.1, 4:0.1, 5:0.1})
-    elif random_forest_type=="Weighted_small":
-        #forest for class balanced version
-        print('-' * 5, 'Using random forest weighted to small classes')
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=100, 
-                                                    max_depth=50, 
-                                                    class_weight={1:0.1, 2:0.1, 3:10, 4:10, 5:10})
-    
-    elif random_forest_type=="Standard":
-        forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
-                                                    n_estimators=100, 
-                                                    max_depth=50)
-    
+        start_time = timeit.default_timer()
+        forest.fit(data_train, labels_train)
+        print(' Time elapsed:', timeit.default_timer() - start_time, 's')
+        #print(' GridSearch best parameters: ', forest.best_params_)
 
-    start_time = timeit.default_timer()
-    forest.fit(data_train, labels_train)
-    print(' Time elapsed:', timeit.default_timer() - start_time, 's')
-    #print(' GridSearch best parameters: ', forest.best_params_)
+        if save_model_weights:
+            with open(f'weights/{random_forest_type.lower()}_model.pkl','wb') as f:
+                pickle.dump(forest,f)
+            print(random_forest_type, ' Model saved.')
+    elif load_model: 
+        with open(f'weights/{random_forest_type.lower()}_model.pkl','rb') as f:
+            forest = pickle.load(f)
+        print(random_forest_type, ' Model loaded.')
 
     print('-' * 5, 'Testing...')
 
@@ -334,10 +334,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             gt_reg = img.images[structure.BrainImageTypes.GroundTruth]
 
             # Trick 1: Largest CC only
-            manipulated_lcc = run_metric_trick_experiment(
+            manipulated_lcc = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_largestCC",
-                keep_largest_cc
+                mutil.keep_largest_cc
             )
             evaluator.evaluate(
                 manipulated_lcc, gt_reg,
@@ -345,10 +345,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             )
 
             # Trick 2: Shrink boundary
-            manipulated_shrink = run_metric_trick_experiment(
+            manipulated_shrink = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_shrink",
-                lambda x: shrink_boundary(x, radius=0.5)
+                lambda x: mutil.shrink_boundary(x, radius=0.5)
             )
             evaluator.evaluate(
                 manipulated_shrink, gt_reg,
@@ -356,22 +356,48 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             )
 
             # Trick 3: Remove far voxels
-            manipulated_remove = run_metric_trick_experiment(
+            manipulated_remove = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_removeDist",
-                lambda x: remove_far_voxels( x,
-                frac_per_label={  # tune these if you want!
-                    1: 0.95,  # WM  keep 95% of radial extent
-                    2: 0.95,  # GM
-                    3: 0.70,  # Hippocampus
-                    4: 0.70,  # Amygdala
-                    5: 0.80,  # Thalamus
-                },
-        default_frac=0.8)
+                lambda x: mutil.remove_far_voxels( x,
+                            frac_per_label={  # tune these if you want!
+                                1: 0.95,  # WM  keep 95% of radial extent
+                                2: 0.95,  # GM
+                                3: 0.70,  # Hippocampus
+                                4: 0.70,  # Amygdala
+                                5: 0.80,  # Thalamus
+                            },
+                    default_frac=0.8
+                )
             )   
             evaluator.evaluate(
                 manipulated_remove, gt_reg,
                 img.id_ + "-TRICK-removeDist"
+            )
+
+            # Trick 4: Morphological closing on labeled voxels
+            manipulated_closed = mutil.run_metric_trick_experiment(
+                seg_pp, gt_reg, tricks_out,
+                f"{img.id_}_morphClose",
+                lambda x: mutil.mask_dilation_and_erosion(x, result_dir=None, img_id=None) # NOTE result_dir and img.id_ required only if you want to save the img after labels are changed
+            ) 
+            evaluator.evaluate(
+                manipulated_closed, gt_reg,
+                img.id_ + "-TRICK-morphClose"
+            )
+
+            # Trick 5: Adjusted label granularity
+            seg_relabeled, gt_relabeled = mutil.run_metric_trick_experiment(
+                seg_pp, gt_reg, tricks_out,
+                f"{img.id_}_relabeled",
+                lambda x,y: mutil.relabel(x,y)
+            )
+            
+            new_labels = {1:"WhiteMatter", 2:"GreyMatter", 6:"SmallStructures"}  #new label as 6 to avoid accidental clashes with original labels
+            relabeled_evaluator = putil.init_evaluator(new_labels)
+            relabeled_evaluator.evaluate(
+                seg_relabeled, gt_relabeled,
+                img.id_ + "-TRICK-relabeled"
             )
 
         # save results
@@ -393,7 +419,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
 
     # use two writers to report the results
-    os.makedirs(result_dir, exist_ok=True)  # generate result directory, if it does not exists
     result_file = os.path.join(result_dir, 'results.csv')
     writer.CSVWriter(result_file).write(evaluator.results)
 
@@ -414,10 +439,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         print("\nGenerating trick-summary boxplots...")
 
         # Load all trick CSV results into a dataframe
-        df = load_trick_results(tricks_dir)
+        df = mutil.load_trick_results(tricks_dir)
 
         # Create summary plots (one figure per trick)
-        plot_trick_summary_boxplot(df, tricks_dir)
+        mutil.plot_trick_summary_boxplot(df, tricks_dir)
 
         print("Trick summary plots saved in:", tricks_dir)
         
@@ -465,6 +490,18 @@ if __name__ == "__main__":
         default="Standard",
         help='Specify whether to run random forest with GridSearch or Balanced classes'
     )
+
+    parser.add_argument(
+        '--load_model_weights',
+        action='store_true',
+        help='Include if stored model should be used (if available) instead of training'
+    )
+
+    parser.add_argument(
+        '--save_model_weights',
+        action='store_true',
+        help='Save model weights after training'
+    )
     
     parser.add_argument(
         '--run_metric_tricks',
@@ -479,4 +516,4 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.extra_eval_acc)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.load_model_weights, args.save_model_weights, args.extra_eval_acc)
