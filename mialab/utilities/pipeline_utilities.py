@@ -318,7 +318,8 @@ def init_evaluator(labels=None) -> eval_.Evaluator:
 
     # define the labels to evaluate
     if labels is None:
-        labels = {1: 'WhiteMatter',
+        labels = {0: 'Background',
+                1: 'WhiteMatter',
                 2: 'GreyMatter',
                 3: 'Hippocampus',
                 4: 'Amygdala',
