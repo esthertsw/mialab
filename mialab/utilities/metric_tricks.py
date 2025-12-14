@@ -1,19 +1,11 @@
 import os
 import numpy as np
+import pandas as pd
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from pymia.evaluation.evaluator import Evaluator
-from pymia.evaluation.metric import DiceCoefficient, HausdorffDistance, AverageDistance, JaccardCoefficient, VolumeSimilarity
+import pymia.evaluation.metric as pymia_metrics
 
-
-from pymia.evaluation.evaluator import SegmentationEvaluator
-from pymia.evaluation.metric import (
-    DiceCoefficient,
-    HausdorffDistance,
-    AverageDistance,
-    JaccardCoefficient,
-    VolumeSimilarity,
-)
+import pymia.evaluation.evaluator as pymia_evaluator
 
 
 
@@ -165,7 +157,13 @@ def mask_dilation_and_erosion(seg: sitk.Image, result_dir=None, img_id=None):
     return out_img
 
 def relabel(seg: sitk.Image, gt: sitk.Image):
+    if seg is None or gt is None:
+        print("relabel(): missing arguments")
+        return
+    print("Running relabel(), args received of type ", type(seg), type(gt))
     std_to_new_label_mapping = { # original label names kept for visibility
+            1: [1, "WhiteMatter"],
+            2: [2, "GreyMatter"],
             3: [6, "Hippocampus"],
             4: [6, "Amygdala"],
             5: [6,"Thalamus"],
@@ -174,10 +172,15 @@ def relabel(seg: sitk.Image, gt: sitk.Image):
     imgs = [seg, gt]
     for idx, img in enumerate(imgs):
         img_as_np = to_np(img)
+        out = np.zeros_like(img_as_np, dtype=np.uint8)
         for label, mapping in std_to_new_label_mapping.items():
+            # Get a mask of points where label == label in loop
             mask = (img_as_np == label).astype(np.uint8)
-            img_as_np[mask] = mapping[0] # re-assign to new label value
-        imgs[idx] = (sitk.GetImageFromArray(img_as_np)).CopyInformation(img)
+            # Reassign with new label
+            out[mask == 1] = mapping[0]
+        out_img = sitk.GetImageFromArray(out.astype(np.uint8))
+        out_img.CopyInformation(img)
+        imgs[idx] = out_img
     return imgs
 
 
@@ -185,22 +188,26 @@ def relabel(seg: sitk.Image, gt: sitk.Image):
 def get_metrics():
     """Return the list of metrics used for the trick experiments."""
     return [
-        DiceCoefficient(),
-        JaccardCoefficient(),
-        VolumeSimilarity(),
-        AverageDistance(),
-        HausdorffDistance(percentile=95, metric="HDRFDST"),
+        pymia_metrics.DiceCoefficient(),
+        pymia_metrics.JaccardCoefficient(),
+        pymia_metrics.VolumeSimilarity(),
+        pymia_metrics.AverageDistance(),
+        pymia_metrics.HausdorffDistance(percentile=95, metric="HDRFDST"),
     ]
 
 
-def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=None):
+def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=False):
     """
     Evaluate a prediction against ground truth using the same style
     of metrics/labels as the main pipeline.
     """
     # Label mapping consistent with pipeline_utilities.init_evaluator()
     if relabeled: # To allow for the assessment of labels with changed granularity
-        labels = relabeled
+        labels = {
+            1: "WhiteMatter",
+            2: "GreyMatter",
+            6: "SmallStructures"
+        }
     else:
         labels = {
             1: "WhiteMatter",
@@ -210,7 +217,7 @@ def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=None):
             5: "Thalamus",
         }
 
-    evaluator = SegmentationEvaluator(get_metrics(), labels)
+    evaluator = pymia_evaluator.SegmentationEvaluator(get_metrics(), labels)
     evaluator.evaluate(pred, gt, "exp")
     return evaluator.results
 
@@ -241,6 +248,7 @@ def run_metric_trick_experiment(
     outdir: str,
     name: str,
     trick_fn,
+    needs_gt=False
 ):
     """
     Run one manipulation experiment:
@@ -254,11 +262,13 @@ def run_metric_trick_experiment(
         manipulated (sitk.Image): the manipulated segmentation
     """
     os.makedirs(outdir, exist_ok=True)
-
+    new_labels = {1: 'WhiteMatter', 2: 'GreyMatter', 6: 'SmallStructures'}
     # Apply trick
-    if trick_fn == relabel: # Special case if relabeling is done, GT needs to be relabeled too
+    if needs_gt: # Special case if relabeling is done, GT needs to be relabeled too
         manipulated, gt_relabeled = trick_fn(seg,gt)
-    manipulated = trick_fn(seg)
+    else: 
+        manipulated = trick_fn(seg)
+        gt_relabeled = gt
 
     # Save images
     save_slice(seg, os.path.join(outdir, f"{name}_orig.png"))
@@ -266,39 +276,50 @@ def run_metric_trick_experiment(
 
     # Evaluate original vs manipulated
     orig_results = evaluate(seg, gt)
-    trick_results = evaluate(manipulated, gt_relabeled if trick_fn == relabel else gt, relabeled=True if trick_fn == relabel else False)
+    trick_results = evaluate(manipulated, gt_relabeled, relabeled=needs_gt)
 
-    csv_path = os.path.join(outdir, f"{name}_metrics.csv")
-    with open(csv_path, "w") as f:
-        f.write("Label,Metric,Original,Tricked\n")
-        for r in orig_results:
-            # r has attributes: id_, label, metric, value
-            matches = [
-                x for x in trick_results
-                if x.label == r.label and x.metric == r.metric
-            ]
-            if matches:
-                f.write(f"{r.label},{r.metric},{r.value},{matches[0].value}\n")
-                
+    if not needs_gt:
+        csv_path = os.path.join(outdir, f"{name}_metrics.csv")
+        with open(csv_path, "w") as f:
+            f.write("Label,Metric,Original,Tricked\n")
+            for r in orig_results:
+                # r has attributes: id_, label, metric, value
+                matches = [
+                    x for x in trick_results
+                    if x.label == r.label and x.metric == r.metric
+                ]
+                if matches:
+                    f.write(f"{r.label},{r.metric},{r.value},{matches[0].value}\n")
+    else:
+        relabeled_csv_path = os.path.join(outdir, f"{name}_metrics.csv")
+        with open(relabeled_csv_path, "w") as f:
+            f.write("Label,Metric,Value\n")
+            # Store all original labels and their results
+            for r in orig_results:
+                f.write(f"{r.label},{r.metric},{r.value}\n")
+            # Store only results from the SmallStructures label
+            for x in trick_results:
+                if x.label == 'SmallStructures':
+                    f.write(f"{x.label},{x.metric},{x.value}\n")
+
+    if needs_gt:
+        return manipulated, gt_relabeled
+    else:
+        return manipulated
 
 
-
-    return manipulated if trick_fn != relabel else manipulated, gt_relabeled
-
-import pandas as pd
-import os
-
-def load_trick_results(tricks_dir: str) -> pd.DataFrame:
+def load_trick_results(tricks_dir: str, relabeled=False) -> pd.DataFrame:
     """
     Load all *_metrics.csv produced by run_metric_trick_experiment.
     Returns a tidy DataFrame with columns:
         Subject, Label, Metric, Original, Tricked, Trick
     """
     rows = []
+    identifier = "_metrics.csv" if not relabeled else "_relabeled_metrics.csv"
 
     for fname in os.listdir(tricks_dir):
-        if fname.endswith("_metrics.csv"):
-            trick_name = fname.replace("_metrics.csv", "")
+        if fname.endswith(identifier):
+            trick_name = fname.replace('_metrics.csv', "")
             subject = trick_name.split("_")[0]
             trick = trick_name.split("_", 1)[1]
 
@@ -323,7 +344,10 @@ def plot_trick_summary_boxplot(tricks_df: pd.DataFrame, outdir: str):
     labels = tricks_df["Label"].unique()
     metrics = tricks_df["Metric"].unique()
     tricks = tricks_df["Trick"].unique()
-
+    if not len(tricks) or not len(tricks_df['Original']) or not len(tricks_df['Tricked']):
+        print("Empty column in csv, unable to plot summary boxplots.")
+        return
+    
     # figure size: adapt to number of metrics/labels
     n_rows = len(labels)
     n_cols = len(metrics)
@@ -369,3 +393,60 @@ def plot_trick_summary_boxplot(tricks_df: pd.DataFrame, outdir: str):
 
         fig.savefig(os.path.join(outdir, f"{trick}_FULL_summary_boxplot.png"), dpi=150)
         plt.close(fig)
+
+def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
+    metrics = tricks_df["Metric"].unique() # N metrics used
+
+    if not len(tricks_df['Value']):
+        print("Empty column in csv, unable to plot relabeled images\' boxplots.")
+        return
+    
+    # Create side-by-side boxplot charts assessing label structures, for all metrics 
+    fig, axs = plt.subplots(nrows=len(metrics), ncols=2, sharey=True)
+    for i, metric in enumerate(metrics):
+        # Original plot on the left
+        orig_df = tricks_df[(tricks_df["Metric"] == metric) & (tricks_df["Label"] != "SmallStructures")]
+        orig_labels = orig_df["Label"].unique()
+        orig_box_data = [
+            orig_df.loc[orig_df["Label"] == lbl, "Value"].values
+            for lbl in orig_labels
+        ]
+
+        axs[i, 0].boxplot(
+                        orig_box_data,
+                        labels=orig_labels,
+                        showfliers=False
+                    )
+        axs[i, 0].set_ylabel(metric, fontsize=10)
+        axs[i, 0].grid(alpha=0.3)
+
+        # New labels on the right
+        mapping = {
+            "Hippocampus": "SmallStructures",
+            "Amygdala": "SmallStructures",
+            "Thalamus": "SmallStructures"
+        }
+        sub = tricks_df[tricks_df["Metric"] == metric].copy()
+        sub["Relabeled"] = sub["Label"].map(mapping).fillna(sub["Label"])
+
+        rel_labels = sub["Relabeled"].unique()
+
+        rel_box_data = [
+            sub.loc[sub["Relabeled"] == lbl, "Value"].values
+            for lbl in rel_labels
+        ]
+        axs[i, 1].boxplot(
+                        rel_box_data,
+                        labels=rel_labels,
+                        showfliers=False
+                    )
+        axs[i, 1].grid(alpha=0.3)
+
+    axs[0,0].set_title('Original labeling', fontsize=10)
+    axs[0,1].set_title('Grouped labeling', fontsize=10)
+
+    plt.suptitle(f"Metric Vulnerability Experiment — Label Granularity", fontsize=14)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+    fig.savefig(os.path.join(outdir, f"relabeled_FULL_summary_boxplot.png"), dpi=150)
+    plt.close(fig)

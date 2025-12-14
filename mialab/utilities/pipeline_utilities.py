@@ -317,14 +317,15 @@ def init_evaluator(labels=None) -> eval_.Evaluator:
                ]
 
     # define the labels to evaluate
-    labels = {0: 'Background',
-              1: 'WhiteMatter',
-              2: 'GreyMatter',
-              3: 'Hippocampus',
-              4: 'Amygdala',
-              5: 'Thalamus'
-              }
-
+    if labels is None:
+        labels = {0: 'Background',
+                1: 'WhiteMatter',
+                2: 'GreyMatter',
+                3: 'Hippocampus',
+                4: 'Amygdala',
+                5: 'Thalamus'
+                }
+    print("Evaluator labels used: ", labels.values())
     evaluator = eval_.SegmentationEvaluator(metrics, labels)
     return evaluator
 
