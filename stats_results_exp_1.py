@@ -21,19 +21,30 @@ def stats_pair(df1, df2, metric):
 
 def stats(metric):
 
-    df_normal   = pd.read_csv("mia-result/Standard 12-02/results.csv", sep=';')
+    df_normal = pd.read_csv("mia-result/Standard 12-02/results.csv", sep=';')
     df_balanced = pd.read_csv("mia-result/Balanced 12-02/results.csv", sep=';')
     df_weighted_large = pd.read_csv("mia-result/Weighted_large 12-03/results.csv", sep=';')
     df_weighted_small = pd.read_csv("mia-result/Weighted_small 12-03/results.csv", sep=';')
-
+    df_overall_metrics_n = pd.read_csv("mia-result/Standard 12-02/global_metrics.csv", sep=';')
+    df_overall_metrics_b = pd.read_csv("mia-result/Balanced 12-02/global_metrics.csv", sep=';')
+    df_overall_metrics_wl = pd.read_csv("mia-result/Weighted_large 12-03/global_metrics.csv", sep=';')
+    df_overall_metrics_ws = pd.read_csv("mia-result/Weighted_small 12-03/global_metrics.csv", sep=';')
     
     models = {
-        "Normal": df_normal,
-        "Balanced": df_balanced,
-        "Weighted large": df_weighted_large, 
-        "Weighted small" : df_weighted_small,
-    }
-
+        "Normal": {
+            "per_label": df_normal,
+            "global": df_overall_metrics_n},
+        "Balanced": {
+            "per_label": df_balanced,
+            "global": df_overall_metrics_b},
+        "Weighted large": {
+            "per_label": df_weighted_large,
+            "global": df_overall_metrics_wl},
+        "Weighted small": {
+            "per_label": df_weighted_small,
+            "global": df_overall_metrics_ws},
+        }
+    
     if not os.path.isdir("stats"):
         os.makedirs("stats")
 
@@ -43,16 +54,21 @@ def stats(metric):
     plt.figure(figsize=(15, 7))
 
     all_rows = []
-    overall_means = {}
+    global_vals = {}
 
-    for model_name, df in models.items():
-        if metric not in df.columns:
-            continue
+    for model_name, data in models.items():
+        df_label = data["per_label"]
+        df_global = data["global"]
 
-        overall_means[model_name] = df[metric].mean()
+        if metric not in df_global.columns:
+            raise ValueError(f"Metric '{metric}' not found in global_metrics.csv for {model_name}")
 
-        for label in sorted(df["LABEL"].unique()):
-            vals = df[df["LABEL"] == label][metric].values
+        global_vals[model_name] = df_global.loc[0, metric]
+
+        df_metric = df_label[df_label["METRIC"] == metric]
+
+        for label in sorted(df_metric["LABEL"].unique()):
+            vals = df_metric[df_metric["LABEL"] == label]["VALUE"].values
             for v in vals:
                 all_rows.append({
                     "LABEL": label,
@@ -74,15 +90,16 @@ def stats(metric):
 
     ax = plt.gca()
     xlim = ax.get_xlim()
-    for model_name, mean_val in overall_means.items():
+
+    for model_name, val in global_vals.items():
         ax.hlines(
-            y=mean_val,
+            y=val,
             xmin=xlim[0],
             xmax=xlim[1],
             colors=model_colors[model_name],
-            linestyles='dashed',
-            linewidth=1.5,
-            label=f"{model_name} overall"
+            linestyles="dashed",
+            linewidth=2,
+            label=f"{model_name} global"
         )
 
     handles, labels_ = ax.get_legend_handles_labels()

@@ -73,6 +73,31 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
                 voxel_counts[c] = count
     return voxel_counts
 
+#Following functions are for overall metric computation
+def compute_confusion(pred, gt, labels):
+    TP = FP = TN = FN = 0
+    for l in labels:
+        TP += np.sum((pred == l) & (gt == l))
+        FP += np.sum((pred == l) & (gt != l))
+        FN += np.sum((pred != l) & (gt == l))
+        TN += np.sum((pred != l) & (gt != l))
+    return TP, FP, TN, FN
+
+def dice_from_confusion(TP, FP, FN):
+    return 2 * TP / (2 * TP + FP + FN) if (2 * TP + FP + FN) > 0 else np.nan
+
+def jaccard_from_confusion(TP, FP, FN):
+    return TP / (TP + FP + FN) if (TP + FP + FN) > 0 else np.nan
+
+def precision_from_confusion(TP, FP):
+    return TP / (TP + FP) if (TP + FP) > 0 else np.nan
+
+def specificity_from_confusion(TN, FP):
+    return TN / (TN + FP) if (TN + FP) > 0 else np.nan
+
+def accuracy_from_confusion(TP, TN, FP, FN):
+    return (TP + TN) / (TP + TN + FP + FN)
+
 def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool, extra_eval_acc: bool):
     """Brain tissue segmentation using decision forests.
 
@@ -183,6 +208,12 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
                                                         n_estimators=150, 
                                                         max_depth=40)
+            
+        elif random_forest_type=="Only_bg":
+            forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
+                                                        n_estimators=150, 
+                                                        max_depth=40, 
+                                                        class_weight={0:1, 1:0, 2:0, 3:0, 4:0, 5:0})
         
 
         start_time = timeit.default_timer()
@@ -194,6 +225,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             with open(f'weights/{random_forest_type.lower()}_model.pkl','wb') as f:
                 pickle.dump(forest,f)
             print(random_forest_type, ' Model saved.')
+
     elif load_model: 
         with open(f'weights/{random_forest_type.lower()}_model.pkl','rb') as f:
             forest = pickle.load(f)
@@ -255,7 +287,16 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
     for img in images_test:
         print('-' * 10, 'Testing', img.id_)
- 
+
+        if img.id_ == "123925":  #to use in the presentation
+            print("saving pre-processed")
+            save_slice(img.images[structure.BrainImageTypes.T1w],
+                 f"{img.id_} – T1 preproccessed",
+                 os.path.join(result_dir, f"{img.id_}_T1pre.png"))
+            save_slice(img.images[structure.BrainImageTypes.T2w],
+                 f"{img.id_} – T2 preproccessed",
+                 os.path.join(result_dir, f"{img.id_}_T2pre.png"))
+            
         start_time = timeit.default_timer()
         predictions = forest.predict(img.feature_matrix[0])
         probabilities = forest.predict_proba(img.feature_matrix[0])
@@ -279,14 +320,13 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
                                                      post_process_params, multi_process=False)
 
     if extra_eval_acc:
-        all_acc_with_bg = []
-        all_acc_no_bg = []
-        correct_total_with_bg = 0
-        voxel_total_with_bg = 0
-        correct_total_no_bg = 0
-        voxel_total_no_bg = 0
-        labels = [0,1,2,3,4,5]
-        labels_no_bg = [1,2,3,4,5]            
+        global_TP = global_FP = global_TN = global_FN = 0
+        labels_eval = [1, 2, 3, 4, 5]
+        dice_vals = []
+        jacc_vals = []
+        vs_vals = []
+        hd95_vals = []
+        avg_dist_vals = []
 
     for i, img in enumerate(images_test):
         evaluator.evaluate(images_post_processed[i], img.images[structure.BrainImageTypes.GroundTruth],
@@ -295,32 +335,28 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         if extra_eval_acc:
             pred = sitk.GetArrayFromImage(images_post_processed[i])
             gt   = sitk.GetArrayFromImage(img.images[structure.BrainImageTypes.GroundTruth])
+            pred_img = images_post_processed[i]
+            gt_img   = img.images[structure.BrainImageTypes.GroundTruth]
         
-            per_label_acc_with_bg = {}
+            TP, FP, TN, FN = compute_confusion(pred, gt, labels_eval)
+            global_TP += TP
+            global_FP += FP
+            global_TN += TN
+            global_FN += FN
 
-            correct_total_with_bg += np.sum(pred == gt)
-            voxel_total_with_bg += gt.size
+            dice = sitk.LabelOverlapMeasuresImageFilter()
+            dice.Execute(pred_img, gt_img)
+            dice_vals.append(dice.GetDiceCoefficient())
+            jacc_vals.append(dice.GetJaccardCoefficient())
+            vs_vals.append(dice.GetVolumeSimilarity())
 
-            for label in labels:
-                mask = (gt == label)
-                if mask.sum() > 0:
-                    acc = np.mean(pred[mask] == gt[mask])
-                    per_label_acc_with_bg[label] = acc
+            hd = sitk.HausdorffDistanceImageFilter()
+            hd.Execute(pred_img, gt_img)
+            hd95_vals.append(hd.GetHausdorffDistance())
 
-            all_acc_with_bg.append(per_label_acc_with_bg)
-            per_label_acc_no_bg = {}
-
-            mask = (gt !=0)
-            correct_total_no_bg += np.sum(pred[mask] == gt[mask])
-            voxel_total_no_bg += np.sum(mask)
-
-            for label in labels_no_bg:
-                mask = (gt == label)
-                if mask.sum() > 0:
-                    acc = np.mean(pred[mask] == gt[mask])
-                    per_label_acc_no_bg[label] = acc
-
-            all_acc_no_bg.append(per_label_acc_no_bg)
+            sd = sitk.SurfaceDistanceImageFilter()
+            sd.Execute(pred_img, gt_img)
+            avg_dist_vals.append(np.mean(sd.GetSurfaceDistances()))
 
         # Run metric-trick experiments (OPTIONAL)
         if run_metric_tricks:
@@ -408,14 +444,28 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         sitk.WriteImage(img.images[structure.BrainImageTypes.T2w], os.path.join(result_dir, images_test[i].id_ + '_T2w_reg.mha'), True)        
 
     if extra_eval_acc:
-        df_with_bg = pd.DataFrame(all_acc_with_bg)
-        df_no_bg   = pd.DataFrame(all_acc_no_bg)
+        dice_global = np.mean(dice_vals)
+        jacc_global = np.mean(jacc_vals)
+        vs_global   = np.mean(vs_vals)
+        hd95_global = np.mean(hd95_vals)
+        avgd_global = np.mean(avg_dist_vals)
 
-        global_accuracy_with_bg = correct_total_with_bg / voxel_total_with_bg
-        global_accuracy_no_bg = correct_total_no_bg / voxel_total_no_bg
+        precision_global = precision_from_confusion(global_TP, global_FP)
+        specificity_global = specificity_from_confusion(global_TN, global_FP)
+        accuracy_global = accuracy_from_confusion(global_TP, global_TN, global_FP, global_FN)
 
-        df_with_bg.to_csv(os.path.join(result_dir,"accuracy_with_background.csv"))
-        df_no_bg.to_csv(os.path.join(result_dir,"accuracy_no_background.csv"))
+        global_metrics = pd.DataFrame([{
+            "DICE": dice_global,
+            "JACRD": jacc_global,
+            "VOLSMTY": vs_global,
+            "HDRFDST": hd95_global,
+            "AVGDIST": avgd_global,
+            "PRCISON": precision_global,
+            "SPCFTY": specificity_global,
+            "ACURCY": accuracy_global
+        }])
+
+        global_metrics.to_csv(os.path.join(result_dir, "global_metrics.csv"),index=False)
 
 
     # use two writers to report the results
