@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+import math
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import pymia.evaluation.metric as pymia_metrics
@@ -402,7 +403,7 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
         return
     
     # Create side-by-side boxplot charts assessing label structures, for all metrics 
-    fig, axs = plt.subplots(nrows=len(metrics), ncols=2, sharey=True)
+    fig, axs = plt.subplots(nrows=len(metrics), ncols=2, sharey=False, figsize=(6,15))
     for i, metric in enumerate(metrics):
         # Original plot on the left
         orig_df = tricks_df[(tricks_df["Metric"] == metric) & (tricks_df["Label"] != "SmallStructures")]
@@ -411,12 +412,15 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
             orig_df.loc[orig_df["Label"] == lbl, "Value"].values
             for lbl in orig_labels
         ]
+        y_min = 0
+        y_max = math.ceil(np.concatenate(orig_box_data).max())
 
         axs[i, 0].boxplot(
                         orig_box_data,
                         labels=orig_labels,
                         showfliers=False
                     )
+        axs[i, 0].set_ylim(y_min, y_max)
         axs[i, 0].set_ylabel(metric, fontsize=10)
         axs[i, 0].grid(alpha=0.3)
 
@@ -442,10 +446,21 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
                     )
         axs[i, 1].grid(alpha=0.3)
 
+        # Set y axis limits
+        axs[i, 0].set_ylim(y_min, y_max)
+        axs[i, 1].set_ylim(y_min, y_max)
+        # Set x label size
+        axs[i, 0].tick_params(axis='x', labelsize=8)
+        axs[i, 1].tick_params(axis='x', labelsize=8)
+        # Rotate all x labels
+        for ax in axs[i]:
+            ax.tick_params(axis="x", labelrotation=30, labelsize=8)
+
     axs[0,0].set_title('Original labeling', fontsize=10)
     axs[0,1].set_title('Grouped labeling', fontsize=10)
+    
 
-    plt.suptitle(f"Metric Vulnerability Experiment — Label Granularity", fontsize=14)
+    plt.suptitle(f"Metric Vulnerability Experiment — Label Granularity")
     plt.tight_layout(rect=[0, 0, 1, 0.97])
 
     fig.savefig(os.path.join(outdir, f"relabeled_FULL_summary_boxplot.png"), dpi=150)
