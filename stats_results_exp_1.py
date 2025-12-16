@@ -3,32 +3,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
-from scipy.stats import wilcoxon
 import argparse
-
-
-def to_matrix(df, metric="DICE"):
-    """Return matrix: rows=labels, columns=[MEAN values] for a metric"""
-    d = df[df["METRIC"] == metric]
-    pivot = d.pivot(index="LABEL", columns="STATISTIC", values="VALUE")
-    return pivot["MEAN"]
-
-def stats_pair(df1, df2, metric):
-    x = to_matrix(df1, metric)
-    y = to_matrix(df2, metric)
-    stat, p = wilcoxon(x, y)
-    return stat, p
 
 def stats(metric):
 
-    df_normal = pd.read_csv("mia-result/Standard 12-14/results.csv", sep=';')
-    df_balanced = pd.read_csv("mia-result/Balanced 12-14/results.csv", sep=';')
-    df_weighted_large = pd.read_csv("mia-result/Weighted_large 12-14/results.csv", sep=';')
-    df_weighted_small = pd.read_csv("mia-result/Weighted_small 12-14/results.csv", sep=';')
-    df_overall_metrics_n = pd.read_csv("mia-result/Standard 12-14/global_metrics.csv", sep=';')
-    df_overall_metrics_b = pd.read_csv("mia-result/Balanced 12-14/global_metrics.csv", sep=';')
-    df_overall_metrics_wl = pd.read_csv("mia-result/Weighted_large 12-14/global_metrics.csv", sep=';')
-    df_overall_metrics_ws = pd.read_csv("mia-result/Weighted_small 12-14/global_metrics.csv", sep=';')
+    df_normal = pd.read_csv("mia-result/Standard_12-14/results.csv", sep=';')
+    df_balanced = pd.read_csv("mia-result/Balanced_12-14/results.csv", sep=';')
+    df_weighted_large = pd.read_csv("mia-result/Weighted_large_12-14/results.csv", sep=';')
+    df_weighted_small = pd.read_csv("mia-result/Weighted_small_12-14/results.csv", sep=';')
+    df_overall_metrics_n = pd.read_csv("mia-result/Standard_12-14/global_metrics.csv", sep=',')
+    df_overall_metrics_b = pd.read_csv("mia-result/Balanced_12-14/global_metrics.csv", sep=',')
+    df_overall_metrics_wl = pd.read_csv("mia-result/Weighted_large_12-14/global_metrics.csv", sep=',')
+    df_overall_metrics_ws = pd.read_csv("mia-result/Weighted_small_12-14/global_metrics.csv", sep=',')
     
     models = {
         "Normal": {
@@ -60,15 +46,18 @@ def stats(metric):
         df_label = data["per_label"]
         df_global = data["global"]
 
+        if metric not in df_label.columns:
+            raise ValueError(f"Metric '{metric}' not found in per-label results for {model_name}")
+
         if metric not in df_global.columns:
             raise ValueError(f"Metric '{metric}' not found in global_metrics.csv for {model_name}")
 
         global_vals[model_name] = df_global.loc[0, metric]
 
-        df_metric = df_label[df_label["METRIC"] == metric]
+        labels = ["Amygdala", "GreyMatter", "Hippocampus", "Thalamus", "WhiteMatter"]
 
-        for label in sorted(df_metric["LABEL"].unique()):
-            vals = df_metric[df_metric["LABEL"] == label]["VALUE"].values
+        for label in labels:
+            vals = df_label[df_label["LABEL"] == label][metric].values
             for v in vals:
                 all_rows.append({
                     "LABEL": label,
