@@ -74,12 +74,11 @@ def main(save_dir, directories, metric_list, combine):
             current_x += 1
 
         bp = plt.boxplot(data, positions=positions, widths=0.25, patch_artist=True)
-        colors = cm.tab10(np.linspace(0, 1, len(dataframes)))
+        colors = ["#4C72B0", "#DD8452"]
         for i, box in enumerate(bp["boxes"]):
             dir_index = i % len(dataframes)
             box.set_facecolor(colors[dir_index])
-            box.set_alpha(0.7)
-
+            
         tick_positions = [np.mean(positions[i:i+len(dataframes)]) 
                         for i in range(0, len(positions), len(dataframes))]
         plt.xticks(tick_positions, labels)
