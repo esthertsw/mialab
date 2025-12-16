@@ -18,13 +18,19 @@ import pymia.evaluation.writer as writer
 
 import matplotlib.pyplot as plt
 
+from dataclasses import dataclass
+from typing import Callable
+
 from mialab.utilities.metric_tricks import (
                 run_metric_trick_experiment,
                 keep_largest_cc,
                 shrink_boundary,
-                remove_far_voxels
+                remove_far_voxels,
+                evaluate
             )
-from mialab.utilities.metric_tricks import plot_trick_summary_boxplot, load_trick_results
+from mialab.utilities.metric_tricks import plot_trick_summary_boxplot, load_trick_results, plot_metric_per_trick_by_class
+from mialab.utilities.metric_tricks import run_metric_trick_experiment_raw_vs_pp
+
 
 try:
     import mialab.data.structure as structure
@@ -36,6 +42,19 @@ except ImportError:
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
+    
+    
+@dataclass(frozen=True)
+class MetricTrick:
+    name: str
+    fn: Callable
+
+METRIC_TRICKS = [
+    MetricTrick("largestCC", keep_largest_cc),
+    MetricTrick("shrink", shrink_boundary),
+    MetricTrick("removeDist", remove_far_voxels),
+]
+    
 
 LOADING_KEYS = [structure.BrainImageTypes.T1w,
                 structure.BrainImageTypes.T2w,
@@ -56,6 +75,9 @@ def save_slice(img, title, out_path, slice_idx=None):
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
 
+
+
+
 def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.GroundTruth):
     """Count the number of voxels per class over a list of images using a standard dict."""
     voxel_counts = {}
@@ -69,6 +91,66 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
             else:
                 voxel_counts[c] = count
     return voxel_counts
+
+
+def run_metric_tricks_for_image(
+    *,
+    img_id,
+    seg_raw,
+    seg_pp,
+    gt_reg,
+    evaluator,
+    tricks,
+    tricks_out,
+):
+    os.makedirs(tricks_out, exist_ok=True)
+
+    for trick in tricks:
+
+        # =========================
+        # Apply metric trick on RAW segmentation
+        # =========================
+        manipulated_raw = run_metric_trick_experiment(
+            seg_raw,
+            gt_reg,
+            tricks_out,
+            f"{img_id}_RAW_{trick.name}",
+            trick.fn
+        )
+        evaluator.evaluate(
+            manipulated_raw,
+            gt_reg,
+            img_id + f"-TRICK-RAW-{trick.name}"
+        )
+
+        # =========================
+        # Apply metric trick on POST-PROCESSED segmentation
+        # =========================
+        manipulated_pp = run_metric_trick_experiment(
+            seg_pp,
+            gt_reg,
+            tricks_out,
+            f"{img_id}_{trick.name}",
+            trick.fn
+        )
+        evaluator.evaluate(
+            manipulated_pp,
+            gt_reg,
+            img_id + f"-TRICK-{trick.name}"
+        )
+
+        # =========================
+        # Compare RAW vs POST-PROCESSED with trick
+        # =========================
+        run_metric_trick_experiment_raw_vs_pp(
+            seg_raw,
+            seg_pp,
+            gt_reg,
+            tricks_out,
+            f"{img_id}_RAWvsPP_{trick.name}",
+            trick.fn
+        )
+
 
 def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool):
     """Brain tissue segmentation using decision forests.
@@ -284,57 +366,17 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         # Run metric-trick experiments (OPTIONAL)
         
         if run_metric_tricks:
-
-
-            tricks_out = os.path.join(result_dir, "metric_tricks")
-            os.makedirs(tricks_out, exist_ok=True)
-
             print(f"Running metric-trick experiments for {img.id_} ...")
 
-            seg_pp = images_post_processed[i]
-            gt_reg = img.images[structure.BrainImageTypes.GroundTruth]
-
-            # Trick 1: Largest CC only
-            manipulated_lcc = run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_largestCC",
-                keep_largest_cc
-            )
-            evaluator.evaluate(
-                manipulated_lcc, gt_reg,
-                img.id_ + "-TRICK-largestCC"
-            )
-
-            # Trick 2: Shrink boundary
-            manipulated_shrink = run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_shrink",
-                lambda x: shrink_boundary(x)
-            )
-            evaluator.evaluate(
-                manipulated_shrink, gt_reg,
-                img.id_ + "-TRICK-shrink"
-            )
-
-            # Trick 3: Remove far voxels
-            manipulated_remove = run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_removeDist",
-                lambda x: remove_far_voxels( x,
-                frac_per_label={  # tune these
-                    1: 0.95,  # WM  keep 95% of radial extent
-                    2: 0.95,  # GM
-                    3: 0.70,  # Hippocampus
-                    4: 0.70,  # Amygdala
-                    5: 0.80,  # Thalamus
-                },
-        default_frac=0.8
-    )
-            )   
-            evaluator.evaluate(
-                manipulated_remove, gt_reg,
-                img.id_ + "-TRICK-removeDist"
-            )
+            run_metric_tricks_for_image(
+            img_id=img.id_,
+            seg_raw=images_prediction[i],
+            seg_pp=images_post_processed[i],
+            gt_reg=img.images[structure.BrainImageTypes.GroundTruth],
+            evaluator=evaluator,
+            tricks=METRIC_TRICKS,
+            tricks_out=os.path.join(result_dir, "metric_tricks"),
+        )
 
         # save results
         sitk.WriteImage(images_prediction[i], os.path.join(result_dir, images_test[i].id_ + '_SEG.mha'), True)
@@ -369,6 +411,8 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
         # Create summary plots (one figure per trick)
         plot_trick_summary_boxplot(df, tricks_dir)
+        plot_metric_per_trick_by_class(df, tricks_dir)
+
 
         print("Trick summary plots saved in:", tricks_dir)
         
@@ -420,8 +464,10 @@ if __name__ == "__main__":
     parser.add_argument(
     '--run_metric_tricks',
     action='store_true',
-    help='Run metric manipulation experiments (largest CC, shrink, distance trimming)'
+    help='Run metric manipulation experiments (largest CC, shrink, distance trimming) in multiple stages of the pipeline'
 )
 
     args = parser.parse_args()
     main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks)
+
+
