@@ -338,3 +338,6 @@ def plot_metric_per_trick_by_class(tricks_df: pd.DataFrame, outdir: str):
 
             fig.savefig(os.path.join(outdir, f"{trick}_{metric}_by_class.png"), dpi=150)
             plt.close(fig)
+
+
+

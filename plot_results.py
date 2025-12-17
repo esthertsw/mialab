@@ -7,34 +7,22 @@ import pandas as pd
 import matplotlib.cm as cm
 from matplotlib.patches import Patch
 
+def main(save_dir, directories, metric_list, combine):
+    dataframes = []
 
-def main(result_dir, metric_list, combine_plots=False):
-    # todo: load the "results.csv" file from the mia-results directory
-    # todo: read the data into a list
-    # todo: plot the Dice coefficients per label (i.e. white matter, gray matter, hippocampus, amygdala, thalamus)
-    #  in a boxplot
-
-    # alternative: instead of manually loading/reading the csv file you could also use the pandas package
-    # but you will need to install it first ('pip install pandas') and import it to this file ('import pandas as pd')
-    #pass  # pass is just a placeholder if there is no other code
-
-    script_dir = os.path.dirname(sys.argv[0])
-    path = os.path.join(os.getcwd(), 'mia-result', result_dir, 'results.csv')
-
-    if not os.path.exists(path):
-        print(f"Error: {path} does not exist.")
-        return
-
-    df = pd.read_csv(path, delimiter=';')
-
-    for metric_name in metric_list:
-        if metric_name not in df.columns:
-            print(f"Error: Metric '{metric_name}' not found in CSV columns: {df.columns.tolist()}")
+    for dir in directories:
+        path = os.path.join(os.getcwd(), 'mia-result', dir, 'results.csv')
+        if not os.path.exists(path):
+            print(f"Error: {path} does not exist.")
             return
-    
+        df = pd.read_csv(path, delimiter=';')
+        dataframes.append(df)
+        
     labels = ['WhiteMatter', 'GreyMatter', 'Hippocampus', 'Amygdala', 'Thalamus']
-    
-    if combine_plots:
+
+    if combine == "metrics":
+        # Use the first dataframe (single directory) and plot multiple metrics
+        df = dataframes[0]
         plt.figure(figsize=(10,6))
         data = []
         positions = []
@@ -44,29 +32,19 @@ def main(result_dir, metric_list, combine_plots=False):
             for m, metric_name in enumerate(metric_list):
                 arr = df[df["LABEL"] == label][metric_name].values
                 data.append(arr)
-                positions.append(current_x + m * 0.3)  # small spacing within the pair
-            current_x += 1  # big jump to next label
+                positions.append(current_x + m * 0.3)
+            current_x += 1
 
-        bp = plt.boxplot(
-            data,
-            positions=positions,
-            widths=0.25,
-            patch_artist=True
-        )
-
-        # color each box
+        bp = plt.boxplot(data, positions=positions, widths=0.25, patch_artist=True)
         colors = cm.tab10(np.linspace(0, 1, len(metric_list)))
-
         for i, box in enumerate(bp["boxes"]):
             metric_index = i % len(metric_list)
             box.set_facecolor(colors[metric_index])
             box.set_alpha(0.7)
-        # label only the *center* of each pair
+
         tick_positions = [np.mean(positions[i:i+len(metric_list)]) 
                         for i in range(0, len(positions), len(metric_list))]
-
         plt.xticks(tick_positions, labels)
-
         plt.grid(axis="y")
         plt.ylabel("Metric value")
         plt.title("Metrics per Brain Structure")
@@ -74,24 +52,64 @@ def main(result_dir, metric_list, combine_plots=False):
                 for i in range(len(metric_list))]
         plt.legend(handles=legend_handles, title="Metrics")
 
-        save_path = os.path.join(os.getcwd(), 'mia-result', result_dir, f'{"_".join(metric_list)}_plot.png')
+        os.makedirs(os.path.join(os.getcwd(), 'mia-result', save_dir), exist_ok=True)
+        save_path = os.path.join(os.getcwd(), 'mia-result', save_dir, f'{"_".join(metric_list)}_plot.png')
+        plt.savefig(save_path)
+        plt.tight_layout()
+        plt.show()
+
+    elif combine == "directories":
+        # Plot the same metric across multiple directories
+        metric_name = metric_list[0]
+        plt.figure(figsize=(10,6))
+        data = []
+        positions = []
+        current_x = 1
+
+        for label in labels:
+            for d, df in enumerate(dataframes):
+                arr = df[df["LABEL"] == label][metric_name].values
+                data.append(arr)
+                positions.append(current_x + d * 0.3)
+            current_x += 1
+
+        bp = plt.boxplot(data, positions=positions, widths=0.25, patch_artist=True)
+        colors = cm.tab10(np.linspace(0, 1, len(dataframes)))
+        for i, box in enumerate(bp["boxes"]):
+            dir_index = i % len(dataframes)
+            box.set_facecolor(colors[dir_index])
+            box.set_alpha(0.7)
+
+        tick_positions = [np.mean(positions[i:i+len(dataframes)]) 
+                        for i in range(0, len(positions), len(dataframes))]
+        plt.xticks(tick_positions, labels)
+        plt.grid(axis="y")
+        plt.ylabel(metric_name)
+        plt.title(f"{metric_name} per Brain Structure")
+
+        legend_handles = [Patch(facecolor=colors[i], label=directories[i], alpha=0.7)
+                        for i in range(len(dataframes))]
+        plt.legend(handles=legend_handles, title="Directory")
+
+        os.makedirs(os.path.join(os.getcwd(), 'mia-result', save_dir), exist_ok=True)
+        save_path = os.path.join(os.getcwd(), 'mia-result', save_dir, f'{metric_name}_directories_plot.png')
         plt.savefig(save_path)
         plt.tight_layout()
         plt.show()
 
     else:
+        # Default: plot single metric in single directory
+        df = dataframes[0]
         for metric_name in metric_list:
-            
             data = [df[df['LABEL'] == label][metric_name].values for label in labels]
-            # Plot a boxplot
             plt.figure(figsize=(10,6))
-            plt.boxplot(data, tick_labels=labels)
+            plt.boxplot(data, labels=labels)
             plt.title(f"{metric_name} per Brain Structure")
             plt.ylabel(metric_name)
             plt.grid(axis='y')
             plt.tight_layout()
-
-            save_path = os.path.join(os.getcwd(), 'mia-result', result_dir, f'{metric_name}_plot.png')
+            os.makedirs(os.path.join(os.getcwd(), 'mia-result', save_dir), exist_ok=True)
+            save_path = os.path.join(os.getcwd(), 'mia-result', save_dir, f'{metric_name}_plot.png')
             plt.savefig(save_path)
             plt.show()
 
@@ -103,7 +121,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--result_dir',
         type=str,
-        help='Name of directory for result in mia-result'
+        help='Name of directories for result in mia-result (separate with comma if multiple)'
     )
 
     parser.add_argument(
@@ -113,14 +131,26 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        '--combine_plots',
+        '--combine',
         type=str,
-        help='Choice of plotting multiple metrics at once [T/F]'
+        default="false",
+        help='Combine metrics or directories (type: metrics or directories)'
+    )
+
+    parser.add_argument(
+        '--save_dir',
+        type=str,
+        help='Name of directory to save plot'
     )
 
     args = parser.parse_args()
-    metrics = ((args.metric).upper()).split(',')
-    combine_plots = False
-    if len(metrics) > 1 and args.combine_plots is not None:
-        combine_plots = True if args.combine_plots.upper() == 'T' else False
-    main(args.result_dir, metrics, combine_plots)
+    metrics = args.metric.upper().split(',')
+    directories = args.result_dir.split(',')
+
+    if args.save_dir is None:
+        args.save_dir = directories[0]
+
+    if len(metrics) > 1 and len(directories) > 1:
+        print("Unable to plot multiple directories and multiple metrics simultaneously, choose one.")
+    else:
+        main(args.save_dir, directories, metrics, args.combine)

@@ -1,3 +1,5 @@
+
+
 """A medical image analysis pipeline.
 
 The pipeline is used for brain tissue segmentation using a decision forest classifier.
@@ -469,5 +471,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks)
+
 
 
