@@ -414,12 +414,13 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             # Trick 4: Morphological closing on labeled voxels
             manipulated_closed = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_morphClose",
-                lambda x: mutil.mask_dilation_and_erosion(x, result_dir=None, img_id=None) # NOTE result_dir and img.id_ required only if you want to save the img after labels are changed
+                f"{img.id_}_volumeMorph",
+                mutil.mask_dilation_and_erosion,
+                needs_gt_morph=True
             ) 
             evaluator.evaluate(
                 manipulated_closed, gt_reg,
-                img.id_ + "-TRICK-morphClose"
+                img.id_ + "-TRICK-volumeMorph"
             )
 
             # Trick 5: Adjusted label granularity
@@ -427,7 +428,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
                 seg_pp, gt_reg, tricks_out,
                 f"{img.id_}_relabeled",
                 mutil.relabel,
-                needs_gt=True
+                needs_gt_relabel=True
             )
             sitk.WriteImage(seg_relabeled, os.path.join(result_dir, img.id_ + '_relabeled.mha'), True)
             

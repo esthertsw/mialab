@@ -119,7 +119,7 @@ def remove_far_voxels(seg: sitk.Image,
     return new_img
 
 
-def mask_dilation_and_erosion(seg: sitk.Image, result_dir=None, img_id=None):
+def mask_dilation_and_erosion(seg: sitk.Image, gt = sitk.Image, result_dir=None, img_id=None):
     """Dilate segmentations per label specified
 
     Args:
@@ -131,30 +131,52 @@ def mask_dilation_and_erosion(seg: sitk.Image, result_dir=None, img_id=None):
         sitk.Image: Segmented image with adjusted labels
     """    
     seg_np = to_np(seg)
+    gt_np = to_np(gt)
     out = np.zeros_like(seg_np, dtype=np.uint8)
-    labels_descending_size = [1,2,5,3,4] # Descending sizes: white matter → gray matter → thalamus → hippocampus → amygdala
-    for label in labels_descending_size:
-        mask = (seg_np == label).astype(np.uint8)
-        mask_img = sitk.GetImageFromArray(mask)
-        mask_img.CopyInformation(seg)
+    labels = range(1,6)
+    max_voxel_diff = 0
+    max_voxels_label = 0
+    for label in labels:
+        mask = (seg_np == label).astype(np.int8)
+        gt_mask = (gt_np == label).astype(np.int8)
+        voxel_diff = np.sum(gt_mask) - np.sum(mask)
+        if abs(voxel_diff) > abs(max_voxel_diff):
+            max_voxels_label = label
+            max_voxel_diff = voxel_diff
+        out[mask == 1] = label
 
+    # Apply morphological changes on the label with max voxel diff
+    mask = (seg_np == max_voxels_label).astype(np.int8)
+    mask_img = sitk.GetImageFromArray(mask)
+    mask_img.CopyInformation(seg)
+
+    # GT is larger than pred for that label's volume --> Apply dilation
+    changed_voxels = 0
+    if max_voxel_diff > 0:
         # Dilate and erode feature labels
-        mask_img = sitk.BinaryMorphologicalClosing(mask_img, [3,3,3])
-
-        # Select largest connected component from the closed mask
-        cc = sitk.ConnectedComponent(mask_img)
-        # Relabel: largest component gets label 1, others 2, 3, ...
-        largest = sitk.RelabelComponent(cc, sortByObjectSize=True)
-        largest_np = sitk.GetArrayFromImage(largest)
-
-        # keep only the largest CC for this label
-        # NOTE: later labels processed will overwrite previous assignments if any. Therefore larger segments should be processed first
-        out[largest_np == 1] = label
-
+        mask_img = sitk.BinaryMorphologicalClosing(mask_img, [2,2,1])
+        # Overwrite the new region's labels
+        mask = to_np(mask_img)
+        out[out == max_voxels_label] = 0
+        out[mask == 1] = max_voxels_label
+        changed_voxels = np.sum((gt_np == max_voxels_label).astype(np.int8)) - np.sum(mask)
+        print("Closing")
+    else:
+        # Erode and dilate feature labels
+        mask_img = sitk.BinaryMorphologicalOpening(mask_img, [2,2,1])
+        # Overwrite the new region's labels
+        mask = to_np(mask_img)
+        out[out == max_voxels_label] = 0
+        out[mask == 1] = max_voxels_label
+        changed_voxels = np.sum((gt_np == max_voxels_label).astype(np.int8)) - np.sum(mask)
+        print("Opening")
+    print("Applied volume morph changes to ", max_voxels_label)
+    print("Diff before: ", max_voxel_diff)
+    print("Diff after: ", changed_voxels)
     out_img = sitk.GetImageFromArray(out.astype(np.uint8))
     out_img.CopyInformation(seg)
-    # if result_dir and img_id:
-        # sitk.WriteImage(out_img, os.path.join(result_dir, img_id + '_TRICKED_morph_closed.mha'), True)
+    if result_dir and img_id:
+        sitk.WriteImage(out_img, os.path.join(result_dir, img_id + '_TRICKED_volumeMorph.mha'), True)
     return out_img
 
 def relabel(seg: sitk.Image, gt: sitk.Image):
@@ -249,7 +271,8 @@ def run_metric_trick_experiment(
     outdir: str,
     name: str,
     trick_fn,
-    needs_gt=False
+    needs_gt_relabel=False,
+    needs_gt_morph=False
 ):
     """
     Run one manipulation experiment:
@@ -265,8 +288,11 @@ def run_metric_trick_experiment(
     os.makedirs(outdir, exist_ok=True)
     new_labels = {1: 'WhiteMatter', 2: 'GreyMatter', 6: 'SmallStructures'}
     # Apply trick
-    if needs_gt: # Special case if relabeling is done, GT needs to be relabeled too
+    if needs_gt_relabel: # Special case if relabeling is done, GT needs to be relabeled too
         manipulated, gt_relabeled = trick_fn(seg,gt)
+    elif needs_gt_morph:
+        manipulated = trick_fn(seg,gt)
+        gt_relabeled = gt
     else: 
         manipulated = trick_fn(seg)
         gt_relabeled = gt
@@ -277,9 +303,9 @@ def run_metric_trick_experiment(
 
     # Evaluate original vs manipulated
     orig_results = evaluate(seg, gt)
-    trick_results = evaluate(manipulated, gt_relabeled, relabeled=needs_gt)
+    trick_results = evaluate(manipulated, gt_relabeled, relabeled=needs_gt_relabel)
 
-    if not needs_gt:
+    if not needs_gt_relabel:
         csv_path = os.path.join(outdir, f"{name}_metrics.csv")
         with open(csv_path, "w") as f:
             f.write("Label,Metric,Original,Tricked\n")
@@ -303,7 +329,7 @@ def run_metric_trick_experiment(
                 if x.label == 'SmallStructures':
                     f.write(f"{x.label},{x.metric},{x.value}\n")
 
-    if needs_gt:
+    if needs_gt_relabel:
         return manipulated, gt_relabeled
     else:
         return manipulated
