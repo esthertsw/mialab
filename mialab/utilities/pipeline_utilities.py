@@ -291,7 +291,7 @@ def post_process(img: structure.BrainImage, segmentation: sitk.Image, probabilit
     return pipeline.execute(segmentation)
 
     
-def init_evaluator(labels=None) -> eval_.Evaluator:
+def init_evaluator(labels=None, metrics=None) -> eval_.Evaluator:
     """Initializes an evaluator.
 
     Returns:
@@ -299,22 +299,23 @@ def init_evaluator(labels=None) -> eval_.Evaluator:
     """
 
     # initialize metrics
-    metrics = [
-              # Overlap-based
-              metric.DiceCoefficient(),
-              metric.JaccardCoefficient(),
+    if metrics is None:
+        metrics = [
+                # Overlap-based
+                metric.DiceCoefficient(),
+                metric.JaccardCoefficient(),
 
-              # Volume-based
-              metric.VolumeSimilarity(),
-              # Distance-based
-              metric.HausdorffDistance(percentile=95, metric='HDRFDST'),
-              metric.AverageDistance(),
-              # metric.SurfaceDistance(percentile=95), # Added Surface Distance
-              # Classification
-              metric.Precision(),
-              metric.Specificity(),
-              metric.Accuracy()
-               ]
+                # Volume-based
+                metric.VolumeSimilarity(),
+                # Distance-based
+                metric.HausdorffDistance(percentile=95, metric='HDRFDST'),
+                metric.AverageDistance(),
+                # metric.SurfaceDistance(percentile=95), # Added Surface Distance
+                # Classification
+                metric.Precision(),
+                metric.Specificity(),
+                metric.Accuracy()
+                ]
 
     # define the labels to evaluate
     if labels is None:
