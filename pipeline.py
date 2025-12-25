@@ -138,36 +138,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # load images for training and pre-process
     images = putil.pre_process_batch(crawler.data, pre_process_params, multi_process=False)
 
-    # =================================
-    # Start of Pre-processing debugging
-    # =================================
-    # debug_dir = os.path.join(result_dir, "_debug_train")
-    # os.makedirs(debug_dir, exist_ok=True)
-    # example_img = images[0]
-    # t1w_arr = sitk.GetArrayFromImage(example_img.images[structure.BrainImageTypes.T1w])
-    # t2w_arr = sitk.GetArrayFromImage(example_img.images[structure.BrainImageTypes.T2w])
-    # bm_arr = sitk.GetArrayFromImage(example_img.images[structure.BrainImageTypes.BrainMask])
-    
-    # print("example T1w shape", t1w_arr.shape)
-    # print("example T2w shape",t2w_arr.shape)
-    # print("example Brain mask shape", bm_arr.shape)
-    
-    # for img in images:
-    #     save_slice(img.images[structure.BrainImageTypes.T1w],
-    #             f"{img.id_} – T1 preproccessed",
-    #             os.path.join(debug_dir, f"{img.id_}_T1pre.png"))
-
-    #     save_slice(img.images[structure.BrainImageTypes.BrainMask],
-    #             f"{img.id_} – Brain Mask",
-    #             os.path.join(debug_dir, f"{img.id_}_mask.png"))
-
-    #     save_slice(img.images[structure.BrainImageTypes.T2w],
-    #             f"{img.id_} – T2 preproccessed",
-    #             os.path.join(debug_dir, f"{img.id_}_T2pre.png"))
-    # # =================================
-    # End of Pre-processing debugging
-    # =================================
-
     # generate feature matrix and label vector
     data_train = np.concatenate([img.feature_matrix[0] for img in images])
     labels_train = np.concatenate([img.feature_matrix[1] for img in images]).squeeze()
