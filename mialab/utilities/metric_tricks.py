@@ -4,8 +4,14 @@ import pandas as pd
 import math
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-import pymia.evaluation.metric as pymia_metrics
-
+from pymia.evaluation.metric import (
+    DiceCoefficient,
+    JaccardCoefficient,
+    AverageDistance,
+    VolumeSimilarity,
+    HausdorffDistance,
+)
+import pipeline_utilities as putil
 import pymia.evaluation.evaluator as pymia_evaluator
 
 
@@ -13,6 +19,62 @@ import pymia.evaluation.evaluator as pymia_evaluator
 def to_np(img: sitk.Image) -> np.ndarray:
     """Convert a SimpleITK image to a NumPy array (z, y, x)."""
     return sitk.GetArrayFromImage(img)
+
+
+# Save slice for visualization
+def save_slice(img: sitk.Image, out_path: str, cmap: str = "tab20"):
+    """
+    Save a mid-axial slice of a 3D image for quick visual inspection.
+    For labels, a qualitative colormap like 'tab20' is nice.
+    """
+    arr = to_np(img)
+    mid = arr.shape[0] // 2
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    plt.figure(figsize=(5, 5))
+    plt.imshow(arr[mid], cmap=cmap)
+    plt.axis("off")
+    plt.savefig(out_path, bbox_inches="tight", dpi=120)
+    plt.close()
+
+
+# Metric evaluation
+def get_metrics():
+    """Return the list of metrics used for the trick experiments."""
+    return [
+        DiceCoefficient(),
+        JaccardCoefficient(),
+        VolumeSimilarity(),
+        AverageDistance(),
+        HausdorffDistance(percentile=95, metric="HDRFDST"),
+    ]
+
+
+def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=False):
+    """
+    Evaluate a prediction against ground truth using the same style
+    of metrics/labels as the main pipeline.
+    """
+    # Label mapping consistent with pipeline_utilities.init_evaluator()
+    if relabeled: # To allow for the assessment of labels with changed granularity
+        labels = {
+            1: "WhiteMatter",
+            2: "GreyMatter",
+            6: "SmallStructures"
+        }
+    else:
+        labels = {
+            1: "WhiteMatter",
+            2: "GreyMatter",
+            3: "Hippocampus",
+            4: "Amygdala",
+            5: "Thalamus",
+        }
+
+    evaluator = putil.init_evaluator(labels=labels, metrics=get_metrics())
+    evaluator.evaluate(pred, gt, "exp")
+    return evaluator.results
+
 
 
 # Manipulation Tricks
@@ -205,62 +267,6 @@ def relabel(seg: sitk.Image, gt: sitk.Image):
         out_img.CopyInformation(img)
         imgs[idx] = out_img
     return imgs
-
-
-# Metric evaluation
-def get_metrics():
-    """Return the list of metrics used for the trick experiments."""
-    return [
-        pymia_metrics.DiceCoefficient(),
-        pymia_metrics.JaccardCoefficient(),
-        pymia_metrics.VolumeSimilarity(),
-        pymia_metrics.AverageDistance(),
-        pymia_metrics.HausdorffDistance(percentile=95, metric="HDRFDST"),
-    ]
-
-
-def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=False):
-    """
-    Evaluate a prediction against ground truth using the same style
-    of metrics/labels as the main pipeline.
-    """
-    # Label mapping consistent with pipeline_utilities.init_evaluator()
-    if relabeled: # To allow for the assessment of labels with changed granularity
-        labels = {
-            1: "WhiteMatter",
-            2: "GreyMatter",
-            6: "SmallStructures"
-        }
-    else:
-        labels = {
-            1: "WhiteMatter",
-            2: "GreyMatter",
-            3: "Hippocampus",
-            4: "Amygdala",
-            5: "Thalamus",
-        }
-
-    evaluator = pymia_evaluator.SegmentationEvaluator(get_metrics(), labels)
-    evaluator.evaluate(pred, gt, "exp")
-    return evaluator.results
-
-
-# Save slice for visualization
-def save_slice(img: sitk.Image, out_path: str, cmap: str = "tab20"):
-    """
-    Save a mid-axial slice of a 3D image for quick visual inspection.
-    For labels, a qualitative colormap like 'tab20' is nice.
-    """
-    arr = to_np(img)
-    mid = arr.shape[0] // 2
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
-    plt.figure(figsize=(5, 5))
-    plt.imshow(arr[mid], cmap=cmap)
-    plt.axis("off")
-    plt.savefig(out_path, bbox_inches="tight", dpi=120)
-    plt.close()
-
 
 
     
