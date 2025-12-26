@@ -13,12 +13,14 @@ import SimpleITK as sitk
 import sklearn.ensemble as sk_ensemble
 from sklearn.model_selection import GridSearchCV
 import numpy as np
+import pickle
 import pymia.data.conversion as conversion
 import pymia.evaluation.writer as writer
-import pickle
 
 import matplotlib.pyplot as plt
-import pandas as pd
+
+from dataclasses import dataclass
+from typing import Callable
 
 from mialab.utilities.metric_tricks import (
                 run_metric_trick_experiment,
@@ -26,19 +28,33 @@ from mialab.utilities.metric_tricks import (
                 shrink_boundary,
                 remove_far_voxels
             )
-from mialab.utilities.metric_tricks import plot_trick_summary_boxplot, load_trick_results
+from mialab.utilities.metric_tricks import plot_trick_summary_boxplot, load_trick_results, plot_metric_per_trick_by_class
+from mialab.utilities.metric_tricks import run_metric_trick_experiment_raw_vs_pp
+
 
 try:
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
-    import mialab.utilities.metric_tricks as mutil
 except ImportError:
     # Append the MIALab root directory to Python path
     sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[0]), '..'))
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
+    
+    
+@dataclass(frozen=True)
+class MetricTrick:
+    name: str
+    fn: Callable
+
+METRIC_TRICKS = [
+    MetricTrick("largestCC", keep_largest_cc),
+    MetricTrick("shrink", shrink_boundary),
+    MetricTrick("removeDist", remove_far_voxels),
+]
+    
 
 LOADING_KEYS = [structure.BrainImageTypes.T1w,
                 structure.BrainImageTypes.T2w,
@@ -48,7 +64,6 @@ LOADING_KEYS = [structure.BrainImageTypes.T1w,
 
 def save_slice(img, title, out_path, slice_idx=None):
     """Save a mid-axial slice of a SimpleITK 3D image."""
-    #for debugging
     arr = sitk.GetArrayFromImage(img)
     if slice_idx is None:
         slice_idx = arr.shape[0] // 2  # axial middle slice
@@ -58,6 +73,9 @@ def save_slice(img, title, out_path, slice_idx=None):
     plt.axis('off')
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close()
+
+
+
 
 def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.GroundTruth):
     """Count the number of voxels per class over a list of images using a standard dict."""
@@ -73,32 +91,67 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
                 voxel_counts[c] = count
     return voxel_counts
 
-#Following functions are for overall metric computation
-def compute_confusion(pred, gt, labels):
-    TP = FP = TN = FN = 0
-    for l in labels:
-        TP += np.sum((pred == l) & (gt == l))
-        FP += np.sum((pred == l) & (gt != l))
-        FN += np.sum((pred != l) & (gt == l))
-        TN += np.sum((pred != l) & (gt != l))
-    return TP, FP, TN, FN
 
-def dice_from_confusion(TP, FP, FN):
-    return 2 * TP / (2 * TP + FP + FN) if (2 * TP + FP + FN) > 0 else np.nan
+def run_metric_tricks_for_image(
+    *,
+    img_id,
+    seg_raw,
+    seg_pp,
+    gt_reg,
+    evaluator,
+    tricks,
+    tricks_out,
+):
+    os.makedirs(tricks_out, exist_ok=True)
 
-def jaccard_from_confusion(TP, FP, FN):
-    return TP / (TP + FP + FN) if (TP + FP + FN) > 0 else np.nan
+    for trick in tricks:
 
-def precision_from_confusion(TP, FP):
-    return TP / (TP + FP) if (TP + FP) > 0 else np.nan
+        # =========================
+        # Apply metric trick on RAW segmentation
+        # =========================
+        manipulated_raw = run_metric_trick_experiment(
+            seg_raw,
+            gt_reg,
+            tricks_out,
+            f"{img_id}_RAW_{trick.name}",
+            trick.fn
+        )
+        evaluator.evaluate(
+            manipulated_raw,
+            gt_reg,
+            img_id + f"-TRICK-RAW-{trick.name}"
+        )
 
-def specificity_from_confusion(TN, FP):
-    return TN / (TN + FP) if (TN + FP) > 0 else np.nan
+        # =========================
+        # Apply metric trick on POST-PROCESSED segmentation
+        # =========================
+        manipulated_pp = run_metric_trick_experiment(
+            seg_pp,
+            gt_reg,
+            tricks_out,
+            f"{img_id}_{trick.name}",
+            trick.fn
+        )
+        evaluator.evaluate(
+            manipulated_pp,
+            gt_reg,
+            img_id + f"-TRICK-{trick.name}"
+        )
 
-def accuracy_from_confusion(TP, TN, FP, FN):
-    return (TP + TN) / (TP + TN + FP + FN)
+        # =========================
+        # Compare RAW vs POST-PROCESSED with trick
+        # =========================
+        run_metric_trick_experiment_raw_vs_pp(
+            seg_raw,
+            seg_pp,
+            gt_reg,
+            tricks_out,
+            f"{img_id}_RAWvsPP_{trick.name}",
+            trick.fn
+        )
 
-def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool, extra_eval_acc: bool):
+
+def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool):
     """Brain tissue segmentation using decision forests.
 
     The main routine executes the medical image analysis pipeline:
@@ -144,7 +197,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
     # Couting voxel proportions
     train_voxel_counts = count_voxels_per_class(images)
-    
     if not load_model or not f'{random_forest_type.lower()}_model.pkl' in os.listdir('weights'): # store weights if not available
         print("Training model")
         if random_forest_type=="GridSearch":
@@ -178,14 +230,13 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
                                                         n_estimators=150, 
                                                         max_depth=40)
-            
+        
+        
         elif random_forest_type=="Only_bg":
             forest = sk_ensemble.RandomForestClassifier(max_features=images[0].feature_matrix[0].shape[1], 
                                                         n_estimators=150, 
                                                         max_depth=40, 
                                                         class_weight={0:1, 1:0, 2:0, 3:0, 4:0, 5:0})
-        
-
         start_time = timeit.default_timer()
         forest.fit(data_train, labels_train)
         print(' Time elapsed:', timeit.default_timer() - start_time, 's')
@@ -195,12 +246,12 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
             with open(f'weights/{random_forest_type.lower()}_model.pkl','wb') as f:
                 pickle.dump(forest,f)
             print(random_forest_type, ' Model saved.')
-
+    
     elif load_model: 
         with open(f'weights/{random_forest_type.lower()}_model.pkl','rb') as f:
             forest = pickle.load(f)
         print(random_forest_type, ' Model loaded.')
-
+        
     print('-' * 5, 'Testing...')
 
     # initialize evaluator
@@ -257,16 +308,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
     for img in images_test:
         print('-' * 10, 'Testing', img.id_)
-
-        if img.id_ == "123925":  #to use in the presentation
-            print("saving pre-processed")
-            save_slice(img.images[structure.BrainImageTypes.T1w],
-                 f"{img.id_} – T1 preproccessed",
-                 os.path.join(result_dir, f"{img.id_}_T1pre.png"))
-            save_slice(img.images[structure.BrainImageTypes.T2w],
-                 f"{img.id_} – T2 preproccessed",
-                 os.path.join(result_dir, f"{img.id_}_T2pre.png"))
-            
+ 
         start_time = timeit.default_timer()
         predictions = forest.predict(img.feature_matrix[0])
         probabilities = forest.predict_proba(img.feature_matrix[0])
@@ -289,98 +331,25 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     images_post_processed = putil.post_process_batch(images_test, images_prediction, images_probabilities,
                                                      post_process_params, multi_process=False)
 
-    if extra_eval_acc:
-        global_TP = global_FP = global_TN = global_FN = 0
-        labels_eval = [1, 2, 3, 4, 5]
-        dice_vals = []
-        jacc_vals = []
-        vs_vals = []
-        hd95_vals = []
-        avg_dist_vals = []
-
     for i, img in enumerate(images_test):
         evaluator.evaluate(images_post_processed[i], img.images[structure.BrainImageTypes.GroundTruth],
                            img.id_ + '-PP')
         
-        if extra_eval_acc:
-            pred = sitk.GetArrayFromImage(images_post_processed[i])
-            gt   = sitk.GetArrayFromImage(img.images[structure.BrainImageTypes.GroundTruth])
-            pred_img = images_post_processed[i]
-            gt_img   = img.images[structure.BrainImageTypes.GroundTruth]
-        
-            TP, FP, TN, FN = compute_confusion(pred, gt, labels_eval)
-            global_TP += TP
-            global_FP += FP
-            global_TN += TN
-            global_FN += FN
-
-            dice = sitk.LabelOverlapMeasuresImageFilter()
-            dice.Execute(pred_img, gt_img)
-            dice_vals.append(dice.GetDiceCoefficient())
-            jacc_vals.append(dice.GetJaccardCoefficient())
-            vs_vals.append(dice.GetVolumeSimilarity())
-
-            hd = sitk.HausdorffDistanceImageFilter()
-            hd.Execute(pred_img, gt_img)
-            hd95_vals.append(hd.GetHausdorffDistance())
-
-            sd = sitk.SurfaceDistanceImageFilter()
-            sd.Execute(pred_img, gt_img)
-            avg_dist_vals.append(np.mean(sd.GetSurfaceDistances()))
-
         # Run metric-trick experiments (OPTIONAL)
+        
         if run_metric_tricks:
-
-            tricks_out = os.path.join(result_dir, "metric_tricks")
-            os.makedirs(tricks_out, exist_ok=True)
-
             print(f"Running metric-trick experiments for {img.id_} ...")
 
-            seg_pp = images_post_processed[i]
-            gt_reg = img.images[structure.BrainImageTypes.GroundTruth]
-
-            # Trick 1: Largest CC only
-            manipulated_lcc = mutil.run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_largestCC",
-                mutil.keep_largest_cc
+            run_metric_tricks_for_image(
+                img_id=img.id_,
+                seg_raw=images_prediction[i],
+                seg_pp=images_post_processed[i],
+                gt_reg=img.images[structure.BrainImageTypes.GroundTruth],
+                evaluator=evaluator,
+                tricks=METRIC_TRICKS,
+                tricks_out=os.path.join(result_dir, "metric_tricks"),
             )
-            evaluator.evaluate(
-                manipulated_lcc, gt_reg,
-                img.id_ + "-TRICK-largestCC"
-            )
-
-            # Trick 2: Shrink boundary
-            manipulated_shrink = mutil.run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_shrink",
-                lambda x: mutil.shrink_boundary(x, radius=0.5)
-            )
-            evaluator.evaluate(
-                manipulated_shrink, gt_reg,
-                img.id_ + "-TRICK-shrink"
-            )
-
-            # Trick 3: Remove far voxels
-            manipulated_remove = mutil.run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_removeDist",
-                lambda x: mutil.remove_far_voxels( x,
-                            frac_per_label={  # tune these if you want!
-                                1: 0.95,  # WM  keep 95% of radial extent
-                                2: 0.95,  # GM
-                                3: 0.70,  # Hippocampus
-                                4: 0.70,  # Amygdala
-                                5: 0.80,  # Thalamus
-                            },
-                    default_frac=0.8
-                )
-            )   
-            evaluator.evaluate(
-                manipulated_remove, gt_reg,
-                img.id_ + "-TRICK-removeDist"
-            )
-
+            
             # Trick 4: Morphological closing on labeled voxels
             manipulated_closed = mutil.run_metric_trick_experiment(
                 seg_pp, gt_reg, tricks_out,
@@ -416,32 +385,8 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, images_test[i].id_ + '_T1w_reg.mha'), True)
         sitk.WriteImage(img.images[structure.BrainImageTypes.T2w], os.path.join(result_dir, images_test[i].id_ + '_T2w_reg.mha'), True)        
 
-    if extra_eval_acc:
-        dice_global = np.mean(dice_vals)
-        jacc_global = np.mean(jacc_vals)
-        vs_global   = np.mean(vs_vals)
-        hd95_global = np.mean(hd95_vals)
-        avgd_global = np.mean(avg_dist_vals)
-
-        precision_global = precision_from_confusion(global_TP, global_FP)
-        specificity_global = specificity_from_confusion(global_TN, global_FP)
-        accuracy_global = accuracy_from_confusion(global_TP, global_TN, global_FP, global_FN)
-
-        global_metrics = pd.DataFrame([{
-            "DICE": dice_global,
-            "JACRD": jacc_global,
-            "VOLSMTY": vs_global,
-            "HDRFDST": hd95_global,
-            "AVGDIST": avgd_global,
-            "PRCISON": precision_global,
-            "SPCFTY": specificity_global,
-            "ACURCY": accuracy_global
-        }])
-
-        global_metrics.to_csv(os.path.join(result_dir, "global_metrics.csv"),index=False)
-
-
     # use two writers to report the results
+    os.makedirs(result_dir, exist_ok=True)  # generate result directory, if it does not exists
     result_file = os.path.join(result_dir, 'results.csv')
     writer.CSVWriter(result_file).write(evaluator.results)
 
@@ -461,16 +406,13 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
         print("\nGenerating trick-summary boxplots...")
 
-        # Load all trick CSV results into a dataframe except for relabeled ones
-        df = mutil.load_trick_results(tricks_dir)
+        # Load all trick CSV results into a dataframe
+        df = load_trick_results(tricks_dir)
 
         # Create summary plots (one figure per trick)
-        mutil.plot_trick_summary_boxplot(df, tricks_dir)
+        plot_trick_summary_boxplot(df, tricks_dir)
+        plot_metric_per_trick_by_class(df, tricks_dir)
 
-        # Load relabeled CSV results
-        df = mutil.load_trick_results(tricks_dir, relabeled=True)
-        # Create summary plot
-        mutil.plot_relabeled_summary_boxplots(df, tricks_dir)
 
         print("Trick summary plots saved in:", tricks_dir)
         
@@ -518,30 +460,15 @@ if __name__ == "__main__":
         default="Standard",
         help='Specify whether to run random forest with GridSearch or Balanced classes'
     )
-
-    parser.add_argument(
-        '--load_model_weights',
-        action='store_true',
-        help='Include if stored model should be used (if available) instead of training'
-    )
-
-    parser.add_argument(
-        '--save_model_weights',
-        action='store_true',
-        help='Save model weights after training'
-    )
     
     parser.add_argument(
-        '--run_metric_tricks',
-        action='store_true',
-        help='Run metric manipulation experiments (largest CC, shrink, distance trimming)'
-    )
-
-    parser.add_argument(
-        '--extra_eval_acc',
-        action='store_true',
-        help='Run additional eval with masked background'
-    )
+    '--run_metric_tricks',
+    action='store_true',
+    help='Run metric manipulation experiments (largest CC, shrink, distance trimming) in multiple stages of the pipeline'
+)
 
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.load_model_weights, args.save_model_weights, args.extra_eval_acc)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks)
+
+
+

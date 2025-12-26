@@ -14,33 +14,34 @@ from pymia.evaluation.metric import (
 import pipeline_utilities as putil
 import pymia.evaluation.evaluator as pymia_evaluator
 
+from pymia.evaluation.evaluator import SegmentationEvaluator
+from pymia.evaluation.metric import (
+    DiceCoefficient,
+    JaccardCoefficient,
+    AverageDistance,
+    VolumeSimilarity,
+    HausdorffDistance,
+)
 
 
+# Utility functions
 def to_np(img: sitk.Image) -> np.ndarray:
-    """Convert a SimpleITK image to a NumPy array (z, y, x)."""
     return sitk.GetArrayFromImage(img)
 
 
-# Save slice for visualization
-def save_slice(img: sitk.Image, out_path: str, cmap: str = "tab20"):
-    """
-    Save a mid-axial slice of a 3D image for quick visual inspection.
-    For labels, a qualitative colormap like 'tab20' is nice.
-    """
+def save_slice(img: sitk.Image, out_path: str, cmap="tab20"):
+    """Save mid-axial slice of a SimpleITK image."""
     arr = to_np(img)
     mid = arr.shape[0] // 2
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
     plt.figure(figsize=(5, 5))
     plt.imshow(arr[mid], cmap=cmap)
     plt.axis("off")
-    plt.savefig(out_path, bbox_inches="tight", dpi=120)
+    plt.savefig(out_path, bbox_inches="tight", dpi=130)
     plt.close()
 
 
-# Metric evaluation
 def get_metrics():
-    """Return the list of metrics used for the trick experiments."""
     return [
         DiceCoefficient(),
         JaccardCoefficient(),
@@ -51,11 +52,7 @@ def get_metrics():
 
 
 def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=False):
-    """
-    Evaluate a prediction against ground truth using the same style
-    of metrics/labels as the main pipeline.
-    """
-    # Label mapping consistent with pipeline_utilities.init_evaluator()
+    """Evaluate a segmentation prediction against ground truth."""
     if relabeled: # To allow for the assessment of labels with changed granularity
         labels = {
             1: "WhiteMatter",
@@ -76,223 +73,134 @@ def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=False):
     return evaluator.results
 
 
+# Metric tricks
 
-# Manipulation Tricks
+# -------------------------------------------------------------------------
+# Trick 1 — Keep Largest Connected Component
+# -------------------------------------------------------------------------
 def keep_largest_cc(seg: sitk.Image) -> sitk.Image:
-    """
-    Keep only the largest connected component per label.
-    This tends to remove small scattered predictions far from the main blob.
-    """
+    """For each label, keep only the largest connected component."""
     seg_np = to_np(seg)
     out = np.zeros_like(seg_np, dtype=np.uint8)
 
-    unique_labels = np.unique(seg_np)
-    for label in unique_labels:
+    for label in np.unique(seg_np):
         if label == 0:
             continue
-
         mask = (seg_np == label).astype(np.uint8)
         mask_img = sitk.GetImageFromArray(mask)
         mask_img.CopyInformation(seg)
 
         cc = sitk.ConnectedComponent(mask_img)
-        # Relabel: largest component gets label 1, others 2, 3, ...
-        largest = sitk.RelabelComponent(cc, sortByObjectSize=True)
-        largest_np = sitk.GetArrayFromImage(largest)
+        relabeled = sitk.RelabelComponent(cc, sortByObjectSize=True)
+        arr = sitk.GetArrayFromImage(relabeled)
 
-        # keep only the largest CC for this label
-        out[largest_np == 1] = label
+        out[arr == 1] = label
 
-    out_img = sitk.GetImageFromArray(out.astype(np.uint8))
+    out_img = sitk.GetImageFromArray(out)
     out_img.CopyInformation(seg)
     return out_img
 
 
-def shrink_boundary(seg: sitk.Image, radius: float = 0.5) -> sitk.Image:
+# -------------------------------------------------------------------------
+# Trick 2 — Improved Shrink Boundary
+# -------------------------------------------------------------------------
+def shrink_boundary(seg: sitk.Image, radius_per_label=None, default_radius=1):
     """
-    Shrink the segmentation inward by removing a shell at the boundary.
-
-    This is done via the distance map:
-    - Compute distance from the boundary
-    - Keep only voxels whose distance >= radius
+    Per-label inward erosion, using BinaryErode with a small radius (in voxels)
     """
-    seg_bin = seg > 0
-    # insideIsPositive=True → inside > 0 is positive distance
-    dist = sitk.SignedMaurerDistanceMap(seg_bin, insideIsPositive=True, squaredDistance=False)
-    shrunk_mask = sitk.Cast(dist > radius, sitk.sitkUInt8)
-    shrunk = sitk.Mask(seg, shrunk_mask)
-    return shrunk
-
-
-def remove_far_voxels(seg: sitk.Image,
-                      frac_per_label: dict | None = None,
-                      default_frac: float = 0.7) -> sitk.Image:
-    """
-    For each anatomical label, remove voxels that are 'far' from the label-specific centroid.
-
-    - We compute distances within each label separately.
-    - For label L, we keep only voxels whose distance <= frac * max_distance_L,
-      where frac is taken from `frac_per_label` or `default_frac`.
-
-    This simulates an over-compact, 'too central' segmentation while
-    being less insane than one global radius.
-    """
-
-    # default fractions per label (adapt/tune if you want)
-    # labels: 1=WM, 2=GM, 3=Hippocampus, 4=Amygdala, 5=Thalamus
-
-    if frac_per_label is None:
-        frac_per_label = {
-            1: 0.95,  # White matter: keep 95% of radial extent
-            2: 0.95,  # Grey matter: same
-            3: 0.70,  # Hippocampus: keep inner 70%
-            4: 0.70,  # Amygdala
-            5: 0.80,  # Thalamus
+    if radius_per_label is None:
+        radius_per_label = {
+            1: 1, 2: 0, 3: 1, 4: 1, 5: 1
         }
 
     seg_np = to_np(seg)
     out = np.zeros_like(seg_np, dtype=np.uint8)
 
-    labels = [l for l in np.unique(seg_np) if l != 0]
+    for lbl in np.unique(seg_np):
+        if lbl == 0:
+            continue
+        mask_np = (seg_np == lbl).astype(np.uint8)
+        mask_img = sitk.GetImageFromArray(mask_np)
+        mask_img.CopyInformation(seg)
 
-    for lbl in labels:
-        coords = np.column_stack(np.where(seg_np == lbl))
-        if coords.size == 0:
+        r = radius_per_label.get(lbl, default_radius)
+
+        if r <= 0:
+            out[mask_np == 1] = lbl
             continue
 
-        # centroid of THIS label
-        center = coords.mean(axis=0)
+        radius_vec = [int(round(r))] * seg.GetDimension()
+        eroded = sitk.BinaryErode(mask_img, radius_vec, sitk.sitkBall, 1)
+        eroded_np = to_np(eroded)
+        out[eroded_np == 1] = lbl
 
-        # distances of each voxel of this label to its centroid
-        dists = np.linalg.norm(coords - center, axis=1)
-        max_d = dists.max()
-
-        frac = frac_per_label.get(lbl, default_frac)
-        thr = frac * max_d  # label-specific threshold
-
-        keep_mask = dists <= thr
-        kept_coords = coords[keep_mask]
-
-        for c in kept_coords:
-            out[tuple(c)] = lbl
-
-    new_img = sitk.GetImageFromArray(out.astype(np.uint8))
-    new_img.CopyInformation(seg)
-    return new_img
-
-
-def mask_dilation_and_erosion(seg: sitk.Image, gt = sitk.Image, result_dir=None, img_id=None):
-    """Dilate segmentations per label specified
-
-    Args:
-        seg (sitk.Image): Segmented image
-        result_dir (str): Storage directory for image after manipulation of labels
-        img_id (str): For identifying the stored images
-
-    Returns:
-        sitk.Image: Segmented image with adjusted labels
-    """    
-    seg_np = to_np(seg)
-    gt_np = to_np(gt)
-    out = np.zeros_like(seg_np, dtype=np.uint8)
-    labels = range(1,6)
-    max_voxel_diff = 0
-    max_voxels_label = 0
-    for label in labels:
-        mask = (seg_np == label).astype(np.int8)
-        gt_mask = (gt_np == label).astype(np.int8)
-        voxel_diff = np.sum(gt_mask) - np.sum(mask)
-        if abs(voxel_diff) > abs(max_voxel_diff):
-            max_voxels_label = label
-            max_voxel_diff = voxel_diff
-        out[mask == 1] = label
-
-    # Apply morphological changes on the label with max voxel diff
-    mask = (seg_np == max_voxels_label).astype(np.int8)
-    mask_img = sitk.GetImageFromArray(mask)
-    mask_img.CopyInformation(seg)
-
-    # GT is larger than pred for that label's volume --> Apply dilation
-    changed_voxels = 0
-    if max_voxel_diff > 0:
-        # Dilate and erode feature labels
-        mask_img = sitk.BinaryMorphologicalClosing(mask_img, [2,2,1])
-        # Overwrite the new region's labels
-        mask = to_np(mask_img)
-        out[out == max_voxels_label] = 0
-        out[mask == 1] = max_voxels_label
-        changed_voxels = np.sum((gt_np == max_voxels_label).astype(np.int8)) - np.sum(mask)
-        print("Closing")
-    else:
-        # Erode and dilate feature labels
-        mask_img = sitk.BinaryMorphologicalOpening(mask_img, [2,2,1])
-        # Overwrite the new region's labels
-        mask = to_np(mask_img)
-        out[out == max_voxels_label] = 0
-        out[mask == 1] = max_voxels_label
-        changed_voxels = np.sum((gt_np == max_voxels_label).astype(np.int8)) - np.sum(mask)
-        print("Opening")
-    print("Applied volume morph changes to ", max_voxels_label)
-    print("Diff before: ", max_voxel_diff)
-    print("Diff after: ", changed_voxels)
     out_img = sitk.GetImageFromArray(out.astype(np.uint8))
     out_img.CopyInformation(seg)
-    if result_dir and img_id:
-        sitk.WriteImage(out_img, os.path.join(result_dir, img_id + '_TRICKED_volumeMorph.mha'), True)
     return out_img
 
-def relabel(seg: sitk.Image, gt: sitk.Image):
-    if seg is None or gt is None:
-        print("relabel(): missing arguments")
-        return
-    print("Running relabel(), args received of type ", type(seg), type(gt))
-    std_to_new_label_mapping = { # original label names kept for visibility
-            1: [1, "WhiteMatter"],
-            2: [2, "GreyMatter"],
-            3: [6, "Hippocampus"],
-            4: [6, "Amygdala"],
-            5: [6,"Thalamus"],
-        } # where 6 = "SmallStructures"
-     
-    imgs = [seg, gt]
-    for idx, img in enumerate(imgs):
-        img_as_np = to_np(img)
-        out = np.zeros_like(img_as_np, dtype=np.uint8)
-        for label, mapping in std_to_new_label_mapping.items():
-            # Get a mask of points where label == label in loop
-            mask = (img_as_np == label).astype(np.uint8)
-            # Reassign with new label
-            out[mask == 1] = mapping[0]
-        out_img = sitk.GetImageFromArray(out.astype(np.uint8))
-        out_img.CopyInformation(img)
-        imgs[idx] = out_img
-    return imgs
-
-
-    
-# Main experiment function
-def run_metric_trick_experiment(
+# -------------------------------------------------------------------------
+# Trick 3 — Remove-Far-Voxels
+# -------------------------------------------------------------------------
+def remove_far_voxels(
     seg: sitk.Image,
-    gt: sitk.Image,
-    outdir: str,
-    name: str,
-    trick_fn,
-    needs_gt_relabel=False,
-    needs_gt_morph=False
+    max_dist_per_label=None,
+    min_size_per_label=None,
+    default_max_dist=20,
+    default_min_size=20
 ):
     """
-    Run one manipulation experiment:
-
-    - apply trick_fn(seg) to get a manipulated segmentation
-    - save mid-slices of original vs manipulated
-    - compute metrics (Dice, Jaccard, VS, AvgDist, HD95) for both
-    - dump a CSV comparing original vs tricked per label/metric
-
-    Returns:
-        manipulated (sitk.Image): the manipulated segmentation
+    Remove connected components far from the main component,
+    using label-dependent distance and size thresholds.
     """
+    if max_dist_per_label is None:
+        max_dist_per_label = {1: 30, 2: 30, 3: 25, 4: 25, 5: 20}
+    if min_size_per_label is None:
+        min_size_per_label = {1: 300, 2: 300, 3: 15, 4: 15, 5: 40}
+    
+    seg_np = to_np(seg).astype(np.uint8)
+    out = np.zeros_like(seg_np, dtype=np.uint8)
+
+    for lbl in np.unique(seg_np):
+        if lbl == 0:
+            continue
+        mask = (seg_np == lbl).astype(np.uint8)
+        mask_img = sitk.GetImageFromArray(mask)
+        mask_img.CopyInformation(seg)
+
+        cc = sitk.ConnectedComponent(mask_img)
+        rel = sitk.RelabelComponent(cc, sortByObjectSize=True)
+        rel_np = to_np(rel)
+
+        if rel_np.max() == 0:
+            continue
+
+        main = (rel_np == 1)
+        main_coords = np.column_stack(np.where(main))
+        main_center = main_coords.mean(axis=0)
+        out[main] = lbl
+
+        max_dist = max_dist_per_label.get(lbl, default_max_dist)
+        min_size = min_size_per_label.get(lbl, default_min_size)
+
+        for comp_id in range(2, int(rel_np.max()) + 1):
+            comp = (rel_np == comp_id)
+            if comp.sum() < min_size:
+                continue
+            comp_center = np.column_stack(np.where(comp)).mean(axis=0)
+            if np.linalg.norm(comp_center - main_center) <= max_dist:
+                out[comp] = lbl
+
+    out_img = sitk.GetImageFromArray(out)
+    out_img.CopyInformation(seg)
+    return out_img
+
+# Metric trick experiment functions
+
+def run_metric_trick_experiment(seg, gt, outdir, name, trick_fn, needs_gt_relabel=False, needs_gt_morph=False):
+    """Run one trick on a segmentation and save results."""
     os.makedirs(outdir, exist_ok=True)
     new_labels = {1: 'WhiteMatter', 2: 'GreyMatter', 6: 'SmallStructures'}
+
     # Apply trick
     if needs_gt_relabel: # Special case if relabeling is done, GT needs to be relabeled too
         manipulated, gt_relabeled = trick_fn(seg,gt)
@@ -341,94 +249,98 @@ def run_metric_trick_experiment(
         return manipulated
 
 
-def load_trick_results(tricks_dir: str, relabeled=False) -> pd.DataFrame:
+def run_metric_trick_experiment_raw_vs_pp(
+    seg_raw: sitk.Image,
+    seg_pp: sitk.Image,
+    gt: sitk.Image,
+    outdir: str,
+    name: str,
+    trick_fn
+):
     """
-    Load all *_metrics.csv produced by run_metric_trick_experiment.
-    Returns a tidy DataFrame with columns:
-        Subject, Label, Metric, Original, Tricked, Trick
+    RAW baseline vs (Post-processed + Trick)
+    Uses the SAME CSV format as all other metric tricks.
     """
+    os.makedirs(outdir, exist_ok=True)
+
+    seg_pp_tricked = trick_fn(seg_pp)
+    save_slice(seg_raw, os.path.join(outdir, f"{name}_orig.png"))
+    save_slice(seg_pp_tricked, os.path.join(outdir, f"{name}_tricked.png"))
+
+    orig = evaluate(seg_raw, gt)
+    trik = evaluate(seg_pp_tricked, gt)
+
+    csv = os.path.join(outdir, f"{name}_metrics.csv")
+    with open(csv, "w") as f:
+        f.write("Label,Metric,Original,Tricked\n")
+        for r in orig:
+            match = [x for x in trik if x.metric == r.metric and x.label == r.label]
+            if match:
+                f.write(f"{r.label},{r.metric},{r.value},{match[0].value}\n")
+
+    return seg_pp_tricked
+
+
+# Trick summary CSV and plots
+
+def load_trick_results(tricks_dir: str) -> pd.DataFrame:
+    """Load all trick CSV results into a single DataFrame."""
     rows = []
-    identifier = "_metrics.csv" if not relabeled else "_relabeled_metrics.csv"
+    for f in os.listdir(tricks_dir):
+        if not f.endswith("_metrics.csv"):
+            continue
+        trick_name = f.replace("_metrics.csv", "")
+        subject = trick_name.split("_")[0]
+        trick = trick_name.split("_", 1)[1]
 
-    for fname in os.listdir(tricks_dir):
-        if fname.endswith(identifier):
-            trick_name = fname.replace('_metrics.csv', "")
-            subject = trick_name.split("_")[0]
-            trick = trick_name.split("_", 1)[1]
-
-            df = pd.read_csv(os.path.join(tricks_dir, fname))
-
-            df["Subject"] = subject
-            df["Trick"] = trick
-
-            rows.append(df)
+        df = pd.read_csv(os.path.join(tricks_dir, f))
+        df["Subject"] = subject
+        df["Trick"] = trick
+        rows.append(df)
 
     return pd.concat(rows, ignore_index=True)
 
 
 def plot_trick_summary_boxplot(tricks_df: pd.DataFrame, outdir: str):
-    """
-    Creates ONE figure per trick.
-    Each figure contains:
-        - rows = structures (labels)
-        - columns = metrics
-        - each cell = boxplot of Original vs Tricked across subjects
-    """
+    """Plot a summary boxplot for each trick."""
     labels = tricks_df["Label"].unique()
     metrics = tricks_df["Metric"].unique()
     tricks = tricks_df["Trick"].unique()
-    if not len(tricks) or not len(tricks_df['Original']) or not len(tricks_df['Tricked']):
-        print("Empty column in csv, unable to plot summary boxplots.")
-        return
-    
-    # figure size: adapt to number of metrics/labels
-    n_rows = len(labels)
-    n_cols = len(metrics)
 
     for trick in tricks:
         df_t = tricks_df[tricks_df["Trick"] == trick]
-
         fig, axes = plt.subplots(
-            n_rows, n_cols,
-            figsize=(3*n_cols, 2.5*n_rows),
-            squeeze=False
+            len(labels), len(metrics),
+            figsize=(3 * len(metrics), 2.6 * len(labels)),
+            squeeze=False,
         )
 
         for i, label in enumerate(labels):
             df_l = df_t[df_t["Label"] == label]
-
             for j, metric in enumerate(metrics):
                 df_m = df_l[df_l["Metric"] == metric]
-
                 ax = axes[i][j]
 
                 if df_m.empty:
                     ax.set_axis_off()
                     continue
 
-                # Boxplot: original vs tricked
-                ax.boxplot(
-                    [df_m["Original"], df_m["Tricked"]],
-                    labels=["Orig", "Trick"],
-                    showfliers=False
-                )
+                ax.boxplot([df_m["Original"], df_m["Tricked"]],
+                           labels=["Orig", "Trick"], showfliers=False)
 
                 if i == 0:
-                    ax.set_title(metric, fontsize=10)
-
+                    ax.set_title(metric)
                 if j == 0:
-                    ax.set_ylabel(label, fontsize=10)
-
+                    ax.set_ylabel(label)
                 ax.grid(alpha=0.3)
 
-        plt.suptitle(f"Metric Vulnerability Summary — Trick: {trick}", fontsize=14)
+        plt.suptitle(f"Metric Vulnerability Summary — Trick: {trick}", fontsize=15)
         plt.tight_layout(rect=[0, 0, 1, 0.97])
-
-        fig.savefig(os.path.join(outdir, f"{trick}_FULL_summary_boxplot.png"), dpi=150)
+        fig.savefig(os.path.join(outdir, f"{trick}_summary_boxplot.png"), dpi=150)
         plt.close(fig)
 
 def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
-    metrics = tricks_df["Metric"].unique() # N metrics used
+    metrics = tricks_df["Metric"].unique()
 
     if not len(tricks_df['Value']):
         print("Empty column in csv, unable to plot relabeled images\' boxplots.")
@@ -497,3 +409,50 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
 
     fig.savefig(os.path.join(outdir, f"relabeled_FULL_summary_boxplot.png"), dpi=150)
     plt.close(fig)
+
+def plot_metric_per_trick_by_class(tricks_df: pd.DataFrame, outdir: str):
+    """Plot Original vs Tricked for each class and metric."""
+    classes = sorted(tricks_df["Label"].unique())
+    tricks = tricks_df["Trick"].unique()
+    metrics = tricks_df["Metric"].unique()
+
+    for trick in tricks:
+        df_trick = tricks_df[tricks_df["Trick"] == trick]
+        for metric in metrics:
+            df_m = df_trick[df_trick["Metric"] == metric]
+            if df_m.empty:
+                continue
+
+            fig, ax = plt.subplots(figsize=(10, 5))
+            orig_data, trick_data = [], []
+
+            for cls in classes:
+                df_c = df_m[df_m["Label"] == cls]
+                orig_data.append(df_c["Original"].values)
+                trick_data.append(df_c["Tricked"].values)
+
+            x = np.arange(len(classes))
+            width = 0.35
+
+            bp1 = ax.boxplot(orig_data, positions=x - width / 2, widths=0.3,
+                             patch_artist=True, showfliers=False)
+            bp2 = ax.boxplot(trick_data, positions=x + width / 2, widths=0.3,
+                             patch_artist=True, showfliers=False)
+
+            for box in bp1["boxes"]:
+                box.set_facecolor("#4C72B0")
+            for box in bp2["boxes"]:
+                box.set_facecolor("#DD8452")
+
+            ax.set_xticks(x)
+            ax.set_xticklabels(classes, rotation=20)
+            ax.set_ylabel(metric)
+            ax.set_title(f"{metric} — Trick: {trick}")
+            ax.legend([bp1["boxes"][0], bp2["boxes"][0]], ["Original", "Tricked"], loc="best")
+            ax.grid(axis="y", alpha=0.3)
+            plt.tight_layout()
+
+            fig.savefig(os.path.join(outdir, f"{trick}_{metric}_by_class.png"), dpi=150)
+            plt.close(fig)
+
+
