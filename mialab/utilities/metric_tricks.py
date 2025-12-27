@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import pandas as pd
 import math
@@ -11,27 +12,20 @@ from pymia.evaluation.metric import (
     VolumeSimilarity,
     HausdorffDistance,
 )
-import pipeline_utilities as putil
-import pymia.evaluation.evaluator as pymia_evaluator
+from dataclasses import dataclass
+from typing import Callable
+try:
+    import mialab.utilities.pipeline_utilities as putil
+except ImportError:
+    sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[0]), '..'))
+    import mialab.utilities.pipeline_utilities as putil
 
-from pymia.evaluation.evaluator import SegmentationEvaluator
-from pymia.evaluation.metric import (
-    DiceCoefficient,
-    JaccardCoefficient,
-    AverageDistance,
-    VolumeSimilarity,
-    HausdorffDistance,
-)
-
-
-# Utility functions
-def to_np(img: sitk.Image) -> np.ndarray:
-    return sitk.GetArrayFromImage(img)
-
-
+# ----------------
+# Helper functions
+# ----------------
 def save_slice(img: sitk.Image, out_path: str, cmap="tab20"):
     """Save mid-axial slice of a SimpleITK image."""
-    arr = to_np(img)
+    arr = sitk.GetArrayFromImage(img)
     mid = arr.shape[0] // 2
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     plt.figure(figsize=(5, 5))
@@ -50,15 +44,24 @@ def get_metrics():
         HausdorffDistance(percentile=95, metric="HDRFDST"),
     ]
 
+def evaluate(pred: sitk.Image, gt: sitk.Image, expt_identifier='exp', relabeled=False):
+    """
+    Evaluate a segmentation prediction against ground truth.
+    Args:
+        pred (sitk.Image): image with predicted segments.
+        gt (sitk.Image): image with ground truth segments.
+        expt_identifier (str): name for the experiment results file.
+        relabeled (bool, optional): Dictates which set of labels to use, reduced granularity or not. Defaults to False.
 
-def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=False):
-    """Evaluate a segmentation prediction against ground truth."""
-    if relabeled: # To allow for the assessment of labels with changed granularity
+    Returns:
+        list: list of pymia.evaluation.evaluator.Result objects for the associated metrics
+    """    
+    if relabeled: # To allow for the assessment of labels with reduced granularity
         labels = {
-            1: "WhiteMatter",
-            2: "GreyMatter",
-            6: "SmallStructures"
-        }
+        1:"WhiteMatter", 
+        2:"GreyMatter", 
+        6:"SmallStructures"
+    }
     else:
         labels = {
             1: "WhiteMatter",
@@ -68,19 +71,31 @@ def evaluate(pred: sitk.Image, gt: sitk.Image, relabeled=False):
             5: "Thalamus",
         }
 
-    evaluator = putil.init_evaluator(labels=labels, metrics=get_metrics())
-    evaluator.evaluate(pred, gt, "exp")
+    evaluator = putil.init_evaluator(labels=labels, metrics=[
+        DiceCoefficient(),
+        JaccardCoefficient(),
+        VolumeSimilarity(),
+        AverageDistance(),
+        HausdorffDistance(percentile=95, metric="HDRFDST"),
+        ]
+    )
+    evaluator.evaluate(pred, gt, expt_identifier)
     return evaluator.results
 
 
-# Metric tricks
+# -----------------------------
+# Metric Manipulation Functions
+# -----------------------------
 
-# -------------------------------------------------------------------------
-# Trick 1 — Keep Largest Connected Component
-# -------------------------------------------------------------------------
 def keep_largest_cc(seg: sitk.Image) -> sitk.Image:
-    """For each label, keep only the largest connected component."""
-    seg_np = to_np(seg)
+    """
+    Keep Largest Connected Component
+    For each label, keep only the largest connected component.
+    
+    Returns:
+        sitk.Image: image made up of largest connected component per segment 
+    """    
+    seg_np = sitk.GetArrayFromImage(seg)
     out = np.zeros_like(seg_np, dtype=np.uint8)
 
     for label in np.unique(seg_np):
@@ -100,20 +115,23 @@ def keep_largest_cc(seg: sitk.Image) -> sitk.Image:
     out_img.CopyInformation(seg)
     return out_img
 
-
-# -------------------------------------------------------------------------
-# Trick 2 — Improved Shrink Boundary
-# -------------------------------------------------------------------------
-def shrink_boundary(seg: sitk.Image, radius_per_label=None, default_radius=1):
+def shrink_boundary(seg: sitk.Image, radius_per_label=None, default_radius=1) -> sitk.Image:
     """
     Per-label inward erosion, using BinaryErode with a small radius (in voxels)
-    """
+    
+    Returns:
+        sitk.Image: image after boundary around each segment is reduced
+    """    
     if radius_per_label is None:
         radius_per_label = {
-            1: 1, 2: 0, 3: 1, 4: 1, 5: 1
+            1: 1, 
+            2: 0, 
+            3: 1, 
+            4: 1, 
+            5: 1
         }
 
-    seg_np = to_np(seg)
+    seg_np = sitk.GetArrayFromImage(seg)
     out = np.zeros_like(seg_np, dtype=np.uint8)
 
     for lbl in np.unique(seg_np):
@@ -131,33 +149,39 @@ def shrink_boundary(seg: sitk.Image, radius_per_label=None, default_radius=1):
 
         radius_vec = [int(round(r))] * seg.GetDimension()
         eroded = sitk.BinaryErode(mask_img, radius_vec, sitk.sitkBall, 1)
-        eroded_np = to_np(eroded)
+        eroded_np = sitk.GetArrayFromImage(eroded)
         out[eroded_np == 1] = lbl
 
     out_img = sitk.GetImageFromArray(out.astype(np.uint8))
     out_img.CopyInformation(seg)
     return out_img
 
-# -------------------------------------------------------------------------
-# Trick 3 — Remove-Far-Voxels
-# -------------------------------------------------------------------------
-def remove_far_voxels(
-    seg: sitk.Image,
-    max_dist_per_label=None,
-    min_size_per_label=None,
-    default_max_dist=20,
-    default_min_size=20
-):
+def remove_far_voxels(seg: sitk.Image,
+                      max_dist_per_label=None,
+                      min_size_per_label=None,
+                      default_max_dist=20,
+                      default_min_size=20) -> sitk.Image:
     """
-    Remove connected components far from the main component,
-    using label-dependent distance and size thresholds.
+    Remove voxels components far from the largest connected component, using label-dependent distance and size thresholds.
     """
     if max_dist_per_label is None:
-        max_dist_per_label = {1: 30, 2: 30, 3: 25, 4: 25, 5: 20}
+        max_dist_per_label = {
+                                1: 30, 
+                                2: 30, 
+                                3: 25, 
+                                4: 25, 
+                                5: 20
+                                }
     if min_size_per_label is None:
-        min_size_per_label = {1: 300, 2: 300, 3: 15, 4: 15, 5: 40}
+        min_size_per_label = {
+                                1: 300, 
+                                2: 300, 
+                                3: 15, 
+                                4: 15, 
+                                5: 40
+                                }
     
-    seg_np = to_np(seg).astype(np.uint8)
+    seg_np = sitk.GetArrayFromImage(seg).astype(np.uint8)
     out = np.zeros_like(seg_np, dtype=np.uint8)
 
     for lbl in np.unique(seg_np):
@@ -169,7 +193,7 @@ def remove_far_voxels(
 
         cc = sitk.ConnectedComponent(mask_img)
         rel = sitk.RelabelComponent(cc, sortByObjectSize=True)
-        rel_np = to_np(rel)
+        rel_np = sitk.GetArrayFromImage(rel)
 
         if rel_np.max() == 0:
             continue
@@ -194,21 +218,200 @@ def remove_far_voxels(
     out_img.CopyInformation(seg)
     return out_img
 
-# Metric trick experiment functions
+def mask_dilation_and_erosion(seg: sitk.Image, gt = sitk.Image, result_dir=None, img_id=None) -> sitk.Image:
+    """
+    Increase/decrease segmentation mask volume for the brain structure with largest volume difference between predicted and ground truth segments
 
-def run_metric_trick_experiment(seg, gt, outdir, name, trick_fn, needs_gt_relabel=False, needs_gt_morph=False):
+    Args:
+        seg (sitk.Image): Segmented image
+        gt (sitk.Image): Ground truth segmented image
+        result_dir (str|None): Storage directory for image after manipulation of labels
+        img_id (str|None): For identifying the stored images
+
+    Returns:
+        sitk.Image: Segmented image with adjusted labels
+    """    
+    seg_np = sitk.GetArrayFromImage(seg)
+    gt_np = sitk.GetArrayFromImage(gt)
+    out = np.zeros_like(seg_np, dtype=np.uint8)
+    labels = range(1,6)
+    max_voxel_diff = 0
+    max_voxels_label = 0
+    for label in labels:
+        mask = (seg_np == label).astype(np.int8)
+        gt_mask = (gt_np == label).astype(np.int8)
+        voxel_diff = np.sum(gt_mask) - np.sum(mask)
+        if abs(voxel_diff) > abs(max_voxel_diff):
+            max_voxels_label = label
+            max_voxel_diff = voxel_diff
+        out[mask == 1] = label
+
+    # Apply morphological changes on the label with max voxel diff
+    mask = (seg_np == max_voxels_label).astype(np.int8)
+    mask_img = sitk.GetImageFromArray(mask)
+    mask_img.CopyInformation(seg)
+
+    # GT is larger than pred for that label's volume --> Apply closing
+    changed_voxels = 0
+    if max_voxel_diff > 0:
+        # Dilate and erode feature labels
+        mask_img = sitk.BinaryMorphologicalClosing(mask_img, [2,2,1])
+        # Overwrite the new region's labels
+        mask = sitk.GetArrayFromImage(mask_img)
+        out[out == max_voxels_label] = 0
+        out[mask == 1] = max_voxels_label
+        changed_voxels = np.sum((gt_np == max_voxels_label).astype(np.int8)) - np.sum(mask)
+    else:
+        # GT is smaller than pred --> Apply opening
+        mask_img = sitk.BinaryMorphologicalOpening(mask_img, [2,2,1])
+        # Overwrite the new region's labels
+        mask = sitk.GetArrayFromImage(mask_img)
+        out[out == max_voxels_label] = 0
+        out[mask == 1] = max_voxels_label
+        changed_voxels = np.sum((gt_np == max_voxels_label).astype(np.int8)) - np.sum(mask)
+    print("Applied volume morph changes to ", max_voxels_label)
+    print("Difference in voxels before: ", max_voxel_diff)
+    print("Difference in voxels after: ", changed_voxels)
+    out_img = sitk.GetImageFromArray(out.astype(np.uint8))
+    out_img.CopyInformation(seg)
+    if result_dir and img_id:
+        sitk.WriteImage(out_img, os.path.join(result_dir, img_id + '_TRICKED_volumeMorph.mha'), True)
+    return out_img
+
+def relabel(seg: sitk.Image, gt: sitk.Image) -> sitk.Image:
+    """
+    Relabel images with a reduced-granularity label set, where SmallStructures covers the Hippocampus, Amygdala and Thalamus
+
+    Args:
+        seg (sitk.Image): Segmented image
+        gt (sitk.Image): Ground truth segmented image
+
+    Returns:
+        sitk.Image: Segmented image with re-mapped labels
+    """    
+    if seg is None or gt is None:
+        print("relabel(): missing arguments")
+        return
+    std_to_new_label_mapping = { # original label names kept for visibility
+            1: [1, "WhiteMatter"],
+            2: [2, "GreyMatter"],
+            3: [6, "Hippocampus"],
+            4: [6, "Amygdala"],
+            5: [6,"Thalamus"],
+        } # where 6 = "SmallStructures"
+     
+    imgs = [seg, gt]
+    for idx, img in enumerate(imgs):
+        img_as_np = sitk.GetArrayFromImage(img)
+        out = np.zeros_like(img_as_np, dtype=np.uint8)
+        for label, mapping in std_to_new_label_mapping.items():
+            # Get a mask of points where label == label in loop
+            mask = (img_as_np == label).astype(np.uint8)
+            # Reassign with new label
+            out[mask == 1] = mapping[0]
+        out_img = sitk.GetImageFromArray(out.astype(np.uint8))
+        out_img.CopyInformation(img)
+        imgs[idx] = out_img
+    return imgs
+
+
+# Caller functions
+def run_metric_tricks_for_image(
+    *,
+    img_id,
+    seg_raw,
+    seg_pp,
+    gt_reg,
+    tricks_out
+):
+    @dataclass(frozen=True)
+    class MetricTrick:
+        name: str
+        fn: Callable
+        run_on_raw: bool
+
+    tricks = [
+        MetricTrick("largestCC", keep_largest_cc, True),
+        MetricTrick("shrink", shrink_boundary, True),
+        MetricTrick("removeDist", remove_far_voxels, True),
+        MetricTrick("morph", mask_dilation_and_erosion, False),
+        MetricTrick('relabel', relabel, False)
+    ]
+
+    os.makedirs(tricks_out, exist_ok=True)
+
+    for trick in tricks:
+
+        # =========================
+        # Apply metric trick on POST-PROCESSED segmentation
+        # =========================
+        gt_reg_relabeled = None # Placeholder for reduced label granularity experiment - GT needs to be relabeled too
+        if trick.name == 'relabel':
+            manipulated_pp, gt_reg_relabeled =  __run_metric_trick_experiment(
+                seg_pp,
+                gt_reg,
+                tricks_out,
+                f"{img_id}_{trick.name}",
+                trick.fn,
+                needs_gt_relabel=True
+            )
+        else:
+            manipulated_pp = __run_metric_trick_experiment(
+                seg_pp,
+                gt_reg,
+                tricks_out,
+                f"{img_id}_{trick.name}",
+                trick.fn,
+                needs_gt_relabel= trick.name == 'relabel',
+                needs_gt_morph= trick.name == 'morph'
+            )
+        evaluate(
+            manipulated_pp,
+            gt_reg if trick.name != 'relabel' else gt_reg_relabeled,
+            img_id + f"-TRICK-{trick.name}",
+            relabeled= trick.name == 'relabel'
+        )
+
+        if trick.run_on_raw:
+            # =========================
+            # Apply metric trick on RAW segmentation
+            # =========================
+            manipulated_raw = __run_metric_trick_experiment(
+                seg_raw,
+                gt_reg,
+                tricks_out,
+                f"{img_id}_RAW_{trick.name}",
+                trick.fn
+            )
+            evaluate(
+                manipulated_raw,
+                gt_reg,
+                img_id + f"-TRICK-RAW-{trick.name}"
+            )
+
+
+            # =========================
+            # Compare RAW vs POST-PROCESSED with trick
+            # =========================
+            __run_metric_trick_experiment_raw_vs_pp(
+                seg_raw,
+                seg_pp,
+                gt_reg,
+                tricks_out,
+                f"{img_id}_RAWvsPP_{trick.name}",
+                trick.fn
+            )
+
+
+def __run_metric_trick_experiment(seg, gt, outdir, name, trick_fn, needs_gt_relabel=False, needs_gt_morph=False):
     """Run one trick on a segmentation and save results."""
     os.makedirs(outdir, exist_ok=True)
-    new_labels = {1: 'WhiteMatter', 2: 'GreyMatter', 6: 'SmallStructures'}
 
     # Apply trick
     if needs_gt_relabel: # Special case if relabeling is done, GT needs to be relabeled too
         manipulated, gt_relabeled = trick_fn(seg,gt)
-    elif needs_gt_morph:
-        manipulated = trick_fn(seg,gt)
-        gt_relabeled = gt
     else: 
-        manipulated = trick_fn(seg)
+        manipulated = trick_fn(seg,gt) if needs_gt_morph else trick_fn(seg)
         gt_relabeled = gt
 
     # Save images
@@ -249,7 +452,7 @@ def run_metric_trick_experiment(seg, gt, outdir, name, trick_fn, needs_gt_relabe
         return manipulated
 
 
-def run_metric_trick_experiment_raw_vs_pp(
+def __run_metric_trick_experiment_raw_vs_pp(
     seg_raw: sitk.Image,
     seg_pp: sitk.Image,
     gt: sitk.Image,
@@ -281,19 +484,25 @@ def run_metric_trick_experiment_raw_vs_pp(
     return seg_pp_tricked
 
 
-# Trick summary CSV and plots
+# ---------------------------
+# Result loading and plotting
+# ---------------------------
 
-def load_trick_results(tricks_dir: str) -> pd.DataFrame:
+def load_trick_results(tricks_dir: str, relabeled=False) -> pd.DataFrame:
     """Load all trick CSV results into a single DataFrame."""
     rows = []
-    for f in os.listdir(tricks_dir):
-        if not f.endswith("_metrics.csv"):
+    identifier = "_metrics.csv" if not relabeled else "_relabel_metrics.csv"
+    print("Files identified:")
+    for fname in os.listdir(tricks_dir):
+        if not fname.endswith(identifier):
             continue
-        trick_name = f.replace("_metrics.csv", "")
+
+        print(fname)
+        trick_name = fname.replace("_metrics.csv", "")
         subject = trick_name.split("_")[0]
         trick = trick_name.split("_", 1)[1]
-
-        df = pd.read_csv(os.path.join(tricks_dir, f))
+        
+        df = pd.read_csv(os.path.join(tricks_dir, fname))
         df["Subject"] = subject
         df["Trick"] = trick
         rows.append(df)
@@ -340,6 +549,13 @@ def plot_trick_summary_boxplot(tricks_df: pd.DataFrame, outdir: str):
         plt.close(fig)
 
 def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
+    """
+    Boxplots for side-by-side comparison between normal vs reduced granulartiy label performance
+
+    Args:
+        tricks_df (pd.DataFrame): results to plot
+        outdir (str): directory to store plots
+    """    
     metrics = tricks_df["Metric"].unique()
 
     if not len(tricks_df['Value']):

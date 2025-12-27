@@ -19,41 +19,20 @@ import pymia.evaluation.writer as writer
 
 import matplotlib.pyplot as plt
 
-from dataclasses import dataclass
-from typing import Callable
-
-from mialab.utilities.metric_tricks import (
-                run_metric_trick_experiment,
-                keep_largest_cc,
-                shrink_boundary,
-                remove_far_voxels
-            )
-from mialab.utilities.metric_tricks import plot_trick_summary_boxplot, load_trick_results, plot_metric_per_trick_by_class
-from mialab.utilities.metric_tricks import run_metric_trick_experiment_raw_vs_pp
-
-
 try:
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
+    import mialab.utilities.metric_tricks as mutil
 except ImportError:
     # Append the MIALab root directory to Python path
     sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[0]), '..'))
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
+    import mialab.utilities.metric_tricks as mutil
     
     
-@dataclass(frozen=True)
-class MetricTrick:
-    name: str
-    fn: Callable
-
-METRIC_TRICKS = [
-    MetricTrick("largestCC", keep_largest_cc),
-    MetricTrick("shrink", shrink_boundary),
-    MetricTrick("removeDist", remove_far_voxels),
-]
     
 
 LOADING_KEYS = [structure.BrainImageTypes.T1w,
@@ -92,67 +71,10 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
     return voxel_counts
 
 
-def run_metric_tricks_for_image(
-    *,
-    img_id,
-    seg_raw,
-    seg_pp,
-    gt_reg,
-    evaluator,
-    tricks,
-    tricks_out,
-):
-    os.makedirs(tricks_out, exist_ok=True)
-
-    for trick in tricks:
-
-        # =========================
-        # Apply metric trick on RAW segmentation
-        # =========================
-        manipulated_raw = run_metric_trick_experiment(
-            seg_raw,
-            gt_reg,
-            tricks_out,
-            f"{img_id}_RAW_{trick.name}",
-            trick.fn
-        )
-        evaluator.evaluate(
-            manipulated_raw,
-            gt_reg,
-            img_id + f"-TRICK-RAW-{trick.name}"
-        )
-
-        # =========================
-        # Apply metric trick on POST-PROCESSED segmentation
-        # =========================
-        manipulated_pp = run_metric_trick_experiment(
-            seg_pp,
-            gt_reg,
-            tricks_out,
-            f"{img_id}_{trick.name}",
-            trick.fn
-        )
-        evaluator.evaluate(
-            manipulated_pp,
-            gt_reg,
-            img_id + f"-TRICK-{trick.name}"
-        )
-
-        # =========================
-        # Compare RAW vs POST-PROCESSED with trick
-        # =========================
-        run_metric_trick_experiment_raw_vs_pp(
-            seg_raw,
-            seg_pp,
-            gt_reg,
-            tricks_out,
-            f"{img_id}_RAWvsPP_{trick.name}",
-            trick.fn
-        )
-
 
 def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool):
-    """Brain tissue segmentation using decision forests.
+    """
+    Brain tissue segmentation using decision forests.
 
     The main routine executes the medical image analysis pipeline:
 
@@ -164,7 +86,17 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         - Segmentation using the decision forest classifier model on unseen images
         - Post-processing of the segmentation
         - Evaluation of the segmentation
-    """
+
+    Args:
+        result_dir (str): directory to mia_results.
+        data_atlas_dir (str): directory to atlas data.
+        data_train_dir (str): directory to train data.
+        data_test_dir (str): directory to test data.
+        random_forest_type (str): Standard/GridSearch/Balanced/Weighted_small/Weighted_large/Only_bg.
+        run_metric_tricks (bool): Run metric manipulation experiments.
+        load_model (bool): Use stored model weights if available.
+        save_model_weights (bool): Store model weights after training.
+    """    
     # create a result directory with timestamp (moved to beginning to save debugging stuff in same dir)
     t = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     result_dir = os.path.join(result_dir, t)
@@ -240,7 +172,8 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         start_time = timeit.default_timer()
         forest.fit(data_train, labels_train)
         print(' Time elapsed:', timeit.default_timer() - start_time, 's')
-        #print(' GridSearch best parameters: ', forest.best_params_)
+        if random_forest_type=="GridSearch":
+            print(' GridSearch best parameters: ', forest.best_params_)
 
         if save_model_weights:
             with open(f'weights/{random_forest_type.lower()}_model.pkl','wb') as f:
@@ -267,10 +200,10 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     pre_process_params['training'] = False
     images_test = putil.pre_process_batch(crawler.data, pre_process_params, multi_process=False)
 
-    #Counting voxels for metric eval
+    # Counting voxels for metric eval
     test_voxel_counts = count_voxels_per_class(images_test)
     
-    #saving voxel counts in csv
+    # Saving voxel counts in csv
     all_classes = set(train_voxel_counts.keys()).union(test_voxel_counts.keys())
     total_train = sum(train_voxel_counts.values())
     total_test = sum(test_voxel_counts.values())
@@ -326,8 +259,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         images_probabilities.append(image_probabilities)
 
     # post-process segmentation and evaluate with post-processing
-    post_process_params = {'simple_post': True, 'morph_radius': 0, 'min_size': 50}  # morph_radius of 0 makes post-processing diff much smaller (1M to 10k)
-    # post_process_params = {'crf_post': True}
+    post_process_params = {'simple_post': True, 'morph_radius': 0, 'min_size': 50}
     images_post_processed = putil.post_process_batch(images_test, images_prediction, images_probabilities,
                                                      post_process_params, multi_process=False)
 
@@ -336,48 +268,17 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
                            img.id_ + '-PP')
         
         # Run metric-trick experiments (OPTIONAL)
-        
         if run_metric_tricks:
             print(f"Running metric-trick experiments for {img.id_} ...")
 
-            run_metric_tricks_for_image(
+            mutil.run_metric_tricks_for_image(
                 img_id=img.id_,
                 seg_raw=images_prediction[i],
                 seg_pp=images_post_processed[i],
                 gt_reg=img.images[structure.BrainImageTypes.GroundTruth],
-                evaluator=evaluator,
-                tricks=METRIC_TRICKS,
                 tricks_out=os.path.join(result_dir, "metric_tricks"),
             )
             
-            # Trick 4: Morphological closing on labeled voxels
-            manipulated_closed = mutil.run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_volumeMorph",
-                mutil.mask_dilation_and_erosion,
-                needs_gt_morph=True
-            ) 
-            evaluator.evaluate(
-                manipulated_closed, gt_reg,
-                img.id_ + "-TRICK-volumeMorph"
-            )
-
-            # Trick 5: Adjusted label granularity
-            seg_relabeled, gt_relabeled = mutil.run_metric_trick_experiment(
-                seg_pp, gt_reg, tricks_out,
-                f"{img.id_}_relabeled",
-                mutil.relabel,
-                needs_gt_relabel=True
-            )
-            sitk.WriteImage(seg_relabeled, os.path.join(result_dir, img.id_ + '_relabeled.mha'), True)
-            
-            new_labels = {0: 'Background', 1:"WhiteMatter", 2:"GreyMatter", 6:"SmallStructures"}  #new label as 6 to avoid accidental clashes with original labels
-            relabeled_evaluator = putil.init_evaluator(new_labels)
-            relabeled_evaluator.evaluate(
-                seg_relabeled, gt_relabeled,
-                img.id_ + "-TRICK-relabeled"
-            )
-
         # save results
         sitk.WriteImage(images_prediction[i], os.path.join(result_dir, images_test[i].id_ + '_SEG.mha'), True)
         sitk.WriteImage(images_post_processed[i], os.path.join(result_dir, images_test[i].id_ + '_SEG-PP.mha'), True)
@@ -385,15 +286,14 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         sitk.WriteImage(img.images[structure.BrainImageTypes.T1w], os.path.join(result_dir, images_test[i].id_ + '_T1w_reg.mha'), True)
         sitk.WriteImage(img.images[structure.BrainImageTypes.T2w], os.path.join(result_dir, images_test[i].id_ + '_T2w_reg.mha'), True)        
 
-    # use two writers to report the results
-    os.makedirs(result_dir, exist_ok=True)  # generate result directory, if it does not exists
+    # Write results to csv file and to console
     result_file = os.path.join(result_dir, 'results.csv')
     writer.CSVWriter(result_file).write(evaluator.results)
 
     print('\nSubject-wise results...')
     writer.ConsoleWriter().write(evaluator.results)
 
-    # report also mean and standard deviation among all subjects
+    # Report mean and standard deviation across subjects
     result_summary_file = os.path.join(result_dir, 'results_summary.csv')
     functions = {'MEAN': np.mean, 'STD': np.std}
     writer.CSVStatisticsWriter(result_summary_file, functions=functions).write(evaluator.results)
@@ -407,11 +307,14 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         print("\nGenerating trick-summary boxplots...")
 
         # Load all trick CSV results into a dataframe
-        df = load_trick_results(tricks_dir)
+        df = mutil.load_trick_results(tricks_dir)
 
         # Create summary plots (one figure per trick)
-        plot_trick_summary_boxplot(df, tricks_dir)
-        plot_metric_per_trick_by_class(df, tricks_dir)
+        mutil.plot_trick_summary_boxplot(df, tricks_dir)
+        mutil.plot_metric_per_trick_by_class(df, tricks_dir)
+        # Load relabeled CSV results
+        df = mutil.load_trick_results(tricks_dir, relabeled=True)
+        mutil.plot_relabeled_summary_boxplots(df, tricks_dir)
 
 
         print("Trick summary plots saved in:", tricks_dir)
@@ -458,17 +361,28 @@ if __name__ == "__main__":
         '--RF',
         type=str,
         default="Standard",
-        help='Specify whether to run random forest with GridSearch or Balanced classes'
+        help='Specify whether to run random forest with GridSearch or Balanced classes [Standard/GridSearch/Balanced]'
     )
     
     parser.add_argument(
-    '--run_metric_tricks',
-    action='store_true',
-    help='Run metric manipulation experiments (largest CC, shrink, distance trimming) in multiple stages of the pipeline'
-)
+        '--run_metric_tricks',
+        action='store_true',
+        help='Run metric manipulation experiments (largest CC, shrink, distance trimming) in multiple stages of the pipeline'
+    )
 
+    parser.add_argument(
+        '--load_model',
+        action='store_true',
+        help='Load model weights if available'
+    )
+
+    parser.add_argument(
+        '--save_model_weights',
+        action='store_true',
+        help='Save model weights after training'
+    )
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.load_model, args.save_model_weights)
 
 
 
