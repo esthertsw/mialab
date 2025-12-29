@@ -314,8 +314,9 @@ def relabel(seg: sitk.Image, gt: sitk.Image) -> sitk.Image:
         imgs[idx] = out_img
     return imgs
 
-
+# ----------------
 # Caller functions
+# ----------------
 def run_metric_tricks_for_image(
     *,
     img_id,
@@ -430,7 +431,7 @@ def __run_metric_trick_experiment(seg, gt, outdir, name, trick_fn, needs_gt_rela
                 # r has attributes: id_, label, metric, value
                 matches = [
                     x for x in trick_results
-                    if x.label == r.label and x.metric == r.metric
+                    if x.label == r.label and x.metric == r.metric and x.label != 'SmallStructures'
                 ]
                 if matches:
                     f.write(f"{r.label},{r.metric},{r.value},{matches[0].value}\n")
@@ -477,7 +478,7 @@ def __run_metric_trick_experiment_raw_vs_pp(
     with open(csv, "w") as f:
         f.write("Label,Metric,Original,Tricked\n")
         for r in orig:
-            match = [x for x in trik if x.metric == r.metric and x.label == r.label]
+            match = [x for x in trik if x.metric == r.metric and x.label == r.label and x.label != 'SmallStructures']
             if match:
                 f.write(f"{r.label},{r.metric},{r.value},{match[0].value}\n")
 
@@ -487,6 +488,14 @@ def __run_metric_trick_experiment_raw_vs_pp(
 # ---------------------------
 # Result loading and plotting
 # ---------------------------
+
+plot_title_mappings = {
+    "largestCC": "Largest Connected Component",
+    "shrink": "Boundary Shrink",
+    "removeDist": "Remove Distant Components",
+    "morph": "Morphological Volume Adjustment",
+    "relabel": "Reduced Label Granularity"
+}
 
 def load_trick_results(tricks_dir: str, relabeled=False) -> pd.DataFrame:
     """Load all trick CSV results into a single DataFrame."""
@@ -502,6 +511,8 @@ def load_trick_results(tricks_dir: str, relabeled=False) -> pd.DataFrame:
         subject = trick_name.split("_")[0]
         trick = trick_name.split("_", 1)[1]
         
+        if not relabeled and trick == 'relabel': 
+            continue # Results for reduced granularity experiments are plotted separately
         df = pd.read_csv(os.path.join(tricks_dir, fname))
         df["Subject"] = subject
         df["Trick"] = trick
@@ -512,9 +523,13 @@ def load_trick_results(tricks_dir: str, relabeled=False) -> pd.DataFrame:
 
 def plot_trick_summary_boxplot(tricks_df: pd.DataFrame, outdir: str):
     """Plot a summary boxplot for each trick."""
+    # Exclude results from reduced label granularity experiment
+    tricks_df = tricks_df[(tricks_df["Trick"] != 'relabel') & (tricks_df["Label"] != 'SmallStructures')]
+
     labels = tricks_df["Label"].unique()
     metrics = tricks_df["Metric"].unique()
     tricks = tricks_df["Trick"].unique()
+
 
     for trick in tricks:
         df_t = tricks_df[tricks_df["Trick"] == trick]
@@ -535,7 +550,7 @@ def plot_trick_summary_boxplot(tricks_df: pd.DataFrame, outdir: str):
                     continue
 
                 ax.boxplot([df_m["Original"], df_m["Tricked"]],
-                           labels=["Orig", "Trick"], showfliers=False)
+                           labels=["Orig", "Adjusted"], showfliers=False)
 
                 if i == 0:
                     ax.set_title(metric)
@@ -543,7 +558,7 @@ def plot_trick_summary_boxplot(tricks_df: pd.DataFrame, outdir: str):
                     ax.set_ylabel(label)
                 ax.grid(alpha=0.3)
 
-        plt.suptitle(f"Metric Vulnerability Summary — Trick: {trick}", fontsize=15)
+        plt.suptitle(f"Metric Vulnerability Summary:\n{plot_title_mappings[trick.split('_')[-1]]}", fontsize=15)
         plt.tight_layout(rect=[0, 0, 1, 0.97])
         fig.savefig(os.path.join(outdir, f"{trick}_summary_boxplot.png"), dpi=150)
         plt.close(fig)
@@ -556,6 +571,7 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
         tricks_df (pd.DataFrame): results to plot
         outdir (str): directory to store plots
     """    
+    metrics_of_interest = ['DICE', 'VOLSMTY', 'HDRFDST']
     metrics = tricks_df["Metric"].unique()
 
     if not len(tricks_df['Value']):
@@ -563,64 +579,32 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
         return
     
     # Create side-by-side boxplot charts assessing label structures, for all metrics 
-    fig, axs = plt.subplots(nrows=len(metrics), ncols=2, sharey=False, figsize=(6,15))
-    for i, metric in enumerate(metrics):
+    fig, axs = plt.subplots(nrows=len(metrics_of_interest), ncols=1, sharey=False, figsize=(6,4*len(metrics_of_interest)))
+    for i, metric in enumerate(metrics_of_interest):
         # Original plot on the left
-        orig_df = tricks_df[(tricks_df["Metric"] == metric) & (tricks_df["Label"] != "SmallStructures")]
-        orig_labels = orig_df["Label"].unique()
-        orig_box_data = [
-            orig_df.loc[orig_df["Label"] == lbl, "Value"].values
-            for lbl in orig_labels
+        results_df = tricks_df[tricks_df["Metric"] == metric]
+        labels_of_interest = ['Amygdala', 'Hippocampus', 'Thalamus', 'SmallStructures']
+        plot_df = [
+            results_df.loc[results_df["Label"] == lbl, "Value"].values
+            for lbl in labels_of_interest
         ]
         y_min = 0
-        y_max = math.ceil(np.concatenate(orig_box_data).max())
+        y_max = math.ceil(np.concatenate(plot_df).max())
 
-        axs[i, 0].boxplot(
-                        orig_box_data,
-                        labels=orig_labels,
-                        showfliers=False
+        axs[i].boxplot(
+                        plot_df,
+                        labels=labels_of_interest,
+                        showfliers=True
                     )
-        axs[i, 0].set_ylim(y_min, y_max)
-        axs[i, 0].set_ylabel(metric, fontsize=10)
-        axs[i, 0].grid(alpha=0.3)
+        axs[i].set_ylim(y_min, y_max)
+        axs[i].set_ylabel(metric, fontsize=10)
+        axs[i].grid(alpha=0.3)
+        axs[i].set_title(f"Reduced Label Granularity - {metric}")
 
-        # New labels on the right
-        mapping = {
-            "Hippocampus": "SmallStructures",
-            "Amygdala": "SmallStructures",
-            "Thalamus": "SmallStructures"
-        }
-        sub = tricks_df[tricks_df["Metric"] == metric].copy()
-        sub["Relabeled"] = sub["Label"].map(mapping).fillna(sub["Label"])
-
-        rel_labels = sub["Relabeled"].unique()
-
-        rel_box_data = [
-            sub.loc[sub["Relabeled"] == lbl, "Value"].values
-            for lbl in rel_labels
-        ]
-        axs[i, 1].boxplot(
-                        rel_box_data,
-                        labels=rel_labels,
-                        showfliers=False
-                    )
-        axs[i, 1].grid(alpha=0.3)
-
-        # Set y axis limits
-        axs[i, 0].set_ylim(y_min, y_max)
-        axs[i, 1].set_ylim(y_min, y_max)
-        # Set x label size
-        axs[i, 0].tick_params(axis='x', labelsize=8)
-        axs[i, 1].tick_params(axis='x', labelsize=8)
         # Rotate all x labels
-        for ax in axs[i]:
-            ax.tick_params(axis="x", labelrotation=30, labelsize=8)
+        for ax in axs:
+            ax.tick_params(axis="x", labelrotation=0, labelsize=8)
 
-    axs[0,0].set_title('Original labeling', fontsize=10)
-    axs[0,1].set_title('Grouped labeling', fontsize=10)
-    
-
-    plt.suptitle(f"Metric Vulnerability Experiment — Label Granularity")
     plt.tight_layout(rect=[0, 0, 1, 0.97])
 
     fig.savefig(os.path.join(outdir, f"relabeled_FULL_summary_boxplot.png"), dpi=150)
@@ -628,6 +612,9 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
 
 def plot_metric_per_trick_by_class(tricks_df: pd.DataFrame, outdir: str):
     """Plot Original vs Tricked for each class and metric."""
+    # Exclude 'SmallStructures' label from Reduced Label Granularity experiment
+    tricks_df = tricks_df[(tricks_df["Label"] != "SmallStructures") & (tricks_df["Trick"] != 'relabel')]
+    
     classes = sorted(tricks_df["Label"].unique())
     tricks = tricks_df["Trick"].unique()
     metrics = tricks_df["Metric"].unique()
@@ -661,10 +648,10 @@ def plot_metric_per_trick_by_class(tricks_df: pd.DataFrame, outdir: str):
                 box.set_facecolor("#DD8452")
 
             ax.set_xticks(x)
-            ax.set_xticklabels(classes, rotation=20)
+            ax.set_xticklabels(classes, rotation=0)
             ax.set_ylabel(metric)
-            ax.set_title(f"{metric} — Trick: {trick}")
-            ax.legend([bp1["boxes"][0], bp2["boxes"][0]], ["Original", "Tricked"], loc="best")
+            ax.set_title(f"{plot_title_mappings[trick.split('_')[-1]]} - {metric}")
+            ax.legend([bp1["boxes"][0], bp2["boxes"][0]], ["Original", "Adjusted"], loc="best")
             ax.grid(axis="y", alpha=0.3)
             plt.tight_layout()
 
