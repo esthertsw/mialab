@@ -11,6 +11,7 @@ from pymia.evaluation.metric import (
     AverageDistance,
     VolumeSimilarity,
     HausdorffDistance,
+    Accuracy
 )
 from dataclasses import dataclass
 from typing import Callable
@@ -34,15 +35,6 @@ def save_slice(img: sitk.Image, out_path: str, cmap="tab20"):
     plt.savefig(out_path, bbox_inches="tight", dpi=130)
     plt.close()
 
-
-def get_metrics():
-    return [
-        DiceCoefficient(),
-        JaccardCoefficient(),
-        VolumeSimilarity(),
-        AverageDistance(),
-        HausdorffDistance(percentile=95, metric="HDRFDST"),
-    ]
 
 def evaluate(pred: sitk.Image, gt: sitk.Image, expt_identifier='exp', relabeled=False):
     """
@@ -77,6 +69,7 @@ def evaluate(pred: sitk.Image, gt: sitk.Image, expt_identifier='exp', relabeled=
         VolumeSimilarity(),
         AverageDistance(),
         HausdorffDistance(percentile=95, metric="HDRFDST"),
+        Accuracy()
         ]
     )
     evaluator.evaluate(pred, gt, expt_identifier)
@@ -529,7 +522,7 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
         tricks_df (pd.DataFrame): results to plot
         outdir (str): directory to store plots
     """    
-    metrics_of_interest = ['DICE', 'VOLSMTY', 'HDRFDST']
+    metrics_of_interest = ['DICE', 'VOLSMTY', 'HDRFDST','ACURCY']
     tricks_df = tricks_df[tricks_df['Metric'].isin(metrics_of_interest)]
     summary_df = (
         tricks_df
@@ -589,6 +582,19 @@ def plot_metric_per_trick_by_class(tricks_df: pd.DataFrame, outdir: str):
 
     for trick in tricks:
         df_trick = tricks_df[tricks_df["Trick"] == trick]
+        if not df_trick.empty:
+            summary_df = (
+                df_trick.groupby(["Label", "Metric"])[["Original", "Tricked"]]
+                  .agg(["mean", "std"])
+            )
+            
+            # Flatten multi-level columns
+            summary_df.columns = ["_".join(col).strip() for col in summary_df.columns.values]
+            summary_df = summary_df.reset_index()
+            
+            # Save to CSV
+            summary_df.to_csv(os.path.join(outdir, f"{trick}_summary.csv"), index=False)
+
         for metric in metrics:
             df_m = df_trick[df_trick["Metric"] == metric]
             if df_m.empty:
