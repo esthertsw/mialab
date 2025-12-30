@@ -273,7 +273,6 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
 
             mutil.run_metric_tricks_for_image(
                 img_id=img.id_,
-                seg_raw=images_prediction[i],
                 seg_pp=images_post_processed[i],
                 gt_reg=img.images[structure.BrainImageTypes.GroundTruth],
                 tricks_out=os.path.join(result_dir, "metric_tricks"),
