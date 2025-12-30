@@ -4,8 +4,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import argparse
-from matplotlib.lines import Line2D
-
 
 def stats(metric):
 
@@ -89,28 +87,14 @@ def stats(metric):
             xmax=xlim[1],
             colors=model_colors[model_name],
             linestyles="dashed",
-            linewidth=2
+            linewidth=2,
+            label=f"{model_name} overall"
         )
 
-    # get existing legend (models only)
     handles, labels_ = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels_, handles))
+    ax.legend(by_label.values(), by_label.keys(), title="Model")
 
-    # create a single legend entry for the class-averaged mean
-    mean_handle = Line2D(
-        [0], [0],
-        color="black",
-        linestyle="dashed",
-        linewidth=2,
-        label="Class-averaged mean"
-    )
-
-    # append it
-    handles.append(mean_handle)
-    labels_.append("Class-averaged mean")
-
-    ax.legend(handles, labels_, title="Model performance")
-
-    plt.xticks(rotation=0)
     plt.title(f"Performance Comparison Across Models - {metric}")
     plt.ylabel(metric)
     plt.tight_layout()
