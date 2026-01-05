@@ -6,9 +6,10 @@ This repository contains all code you will need to recreate the results presente
 ----
 To run, use the following in your command line or script:
 
-```
-python pipeline.py [OPTIONS]
+`python pipeline.py [OPTIONS]`
 
+Options:
+```
 --result_dir PATH
     Directory for results.
     Default: ./mia-result (relative to script directory)
