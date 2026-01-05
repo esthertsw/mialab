@@ -23,14 +23,14 @@ try:
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
-    import mialab.utilities.metric_tricks as mutil
+    import mialab.utilities.metric_experiments as mutil
 except ImportError:
     # Append the MIALab root directory to Python path
     sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[0]), '..'))
     import mialab.data.structure as structure
     import mialab.utilities.file_access_utilities as futil
     import mialab.utilities.pipeline_utilities as putil
-    import mialab.utilities.metric_tricks as mutil
+    import mialab.utilities.metric_experiments as mutil
     
     
     
@@ -72,7 +72,7 @@ def count_voxels_per_class(image_list, label_key=structure.BrainImageTypes.Groun
 
 
 
-def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_tricks: bool, load_model:bool, save_model_weights:bool):
+def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_dir: str, random_forest_type: str, run_metric_expts: bool, load_model:bool, save_model_weights:bool):
     """
     Brain tissue segmentation using decision forests.
 
@@ -93,7 +93,7 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         data_train_dir (str): directory to train data.
         data_test_dir (str): directory to test data.
         random_forest_type (str): Standard/GridSearch/Balanced/Weighted_small/Weighted_large/Only_bg.
-        run_metric_tricks (bool): Run metric manipulation experiments.
+        run_metric_expts (bool): Run metric manipulation experiments.
         load_model (bool): Use stored model weights if available.
         save_model_weights (bool): Store model weights after training.
     """    
@@ -267,15 +267,15 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
         evaluator.evaluate(images_post_processed[i], img.images[structure.BrainImageTypes.GroundTruth],
                            img.id_ + '-PP')
         
-        # Run metric-trick experiments (OPTIONAL)
-        if run_metric_tricks:
-            print(f"Running metric-trick experiments for {img.id_} ...")
+        # Run metric sensitivity experiments
+        if run_metric_expts:
+            print(f"Running metric experiments for {img.id_} ...")
 
-            mutil.run_metric_tricks_for_image(
+            mutil.run_metric_expts_for_image(
                 img_id=img.id_,
                 seg_pp=images_post_processed[i],
                 gt_reg=img.images[structure.BrainImageTypes.GroundTruth],
-                tricks_out=os.path.join(result_dir, "metric_tricks"),
+                output_dir=os.path.join(result_dir, "metric_experiments")
             )
             
         # save results
@@ -295,28 +295,27 @@ def main(result_dir: str, data_atlas_dir: str, data_train_dir: str, data_test_di
     # Report mean and standard deviation across subjects
     result_summary_file = os.path.join(result_dir, 'results_summary.csv')
     functions = {'MEAN': np.mean, 'STD': np.std}
-    writer.CSVStatisticsWriter(result_summary_file, functions=functions).write(evaluator.results)
+    writer.CSVStatisticsWriter(result_summary_file, functions=functions).write(evaluator.results) # write to csv
     print('\nAggregated statistic results...')
-    writer.ConsoleStatisticsWriter(functions=functions).write(evaluator.results)
+    writer.ConsoleStatisticsWriter(functions=functions).write(evaluator.results) # write to console
 
-    # Generate global trick summary plots
-    if run_metric_tricks:
-        tricks_dir = os.path.join(result_dir, "metric_tricks")
+    # Generate global metric experiment summary plots
+    if run_metric_expts:
+        metric_expt_dir = os.path.join(result_dir, "metric_experiments")
 
-        print("\nGenerating trick-summary boxplots...")
+        print("\nGenerating metric experiment summary boxplots...")
 
-        # Load all trick CSV results into a dataframe
-        df = mutil.load_trick_results(tricks_dir)
+        # Create summary plots for each metric experiment results
+        df = mutil.load_expt_results(metric_expt_dir)
+        mutil.plot_expt_summary_boxplot(df, metric_expt_dir)
+        mutil.plot_metric_per_expt_by_class(df, metric_expt_dir)
 
-        # Create summary plots (one figure per trick)
-        mutil.plot_trick_summary_boxplot(df, tricks_dir)
-        mutil.plot_metric_per_trick_by_class(df, tricks_dir)
-        # Load relabeled CSV results
-        df = mutil.load_trick_results(tricks_dir, relabeled=True)
-        mutil.plot_relabeled_summary_boxplots(df, tricks_dir)
+        # Create plots for reduced granularity labels experiment
+        df = mutil.load_expt_results(metric_expt_dir, relabeled=True)
+        mutil.plot_relabeled_summary_boxplots(df, metric_expt_dir)
 
 
-        print("Trick summary plots saved in:", tricks_dir)
+        print("Metric experiments summary plots saved in:", metric_expt_dir)
         
     evaluator.clear()
 
@@ -364,7 +363,7 @@ if __name__ == "__main__":
     )
     
     parser.add_argument(
-        '--run_metric_tricks',
+        '--run_metric_expts',
         action='store_true',
         help='Run metric manipulation experiments (largest CC, shrink, distance trimming) in multiple stages of the pipeline'
     )
@@ -381,7 +380,7 @@ if __name__ == "__main__":
         help='Save model weights after training'
     )
     args = parser.parse_args()
-    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_tricks, args.load_model, args.save_model_weights)
+    main(args.result_dir, args.data_atlas_dir, args.data_train_dir, args.data_test_dir, args.RF, args.run_metric_expts, args.load_model, args.save_model_weights)
 
 
 
