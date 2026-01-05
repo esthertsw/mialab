@@ -25,7 +25,14 @@ except ImportError:
 # Helper functions
 # ----------------
 def save_slice(img: sitk.Image, out_path: str, cmap="tab20"):
-    """Save mid-axial slice of a SimpleITK image."""
+    """
+    Save mid-axial slice of a SimpleITK image.
+
+    Args:
+        img (sitk.Image): Segmentation
+        out_path (str): Filepath to save image as
+        cmap (str, optional): Colour scheme for labels. Defaults to "tab20".
+    """    
     arr = sitk.GetArrayFromImage(img)
     mid = arr.shape[0] // 2
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -84,7 +91,8 @@ def keep_largest_cc(seg: sitk.Image) -> sitk.Image:
     """
     Keep Largest Connected Component
     For each label, keep only the largest connected component.
-    
+    Args:
+        seg (sitk.Image): image with predicted segments.
     Returns:
         sitk.Image: image made up of largest connected component per segment 
     """    
@@ -111,7 +119,12 @@ def keep_largest_cc(seg: sitk.Image) -> sitk.Image:
 def shrink_boundary(seg: sitk.Image) -> sitk.Image:
     """
     Aggressive per-label inward erosion for metric manipulation.
-    Spacing-normalized so erosion ACTUALLY happens.
+
+    Args:
+        pred (sitk.Image): image with predicted segments.
+
+    Returns:
+        sitk.Image: image with each label's boundary-eroded segmentation 
     """
 
     radius_per_label = {
@@ -160,6 +173,16 @@ def remove_far_voxels(seg: sitk.Image,
                       default_min_size=20) -> sitk.Image:
     """
     Remove voxels components far from the largest connected component, using label-dependent distance and size thresholds.
+
+    Args:
+        seg (sitk.Image): segmented image
+        max_dist_per_label (int, optional): Largest distance to tolerate for voxels to be included in each label's segmentation. Defaults to None.
+        min_size_per_label (int, optional): Minimum number of voxels per label. Defaults to None.
+        default_max_dist (int, optional): Defaults to 20.
+        default_min_size (int, optional): Defaults to 20.
+
+    Returns:
+        sitk.Image: segmentation with distant voxels removed per label.
     """
     if max_dist_per_label is None:
         max_dist_per_label = {
@@ -321,6 +344,15 @@ def run_metric_expts_for_image(
     gt_reg,
     output_dir
 ):
+    """
+    Caller function to run metric sensitivity analysis experiments on the given segmentation.
+
+    Args:
+        img_id (str): Identifier for the segmentation provided
+        seg_pp (sitk.Image): post-processed segmentation
+        gt_reg (sitk.Image): ground truth segmentations, post-registration
+        output_dir (str): Directory to store experiment results in
+    """    
     @dataclass(frozen=True)
     class MetricExpt:
         name: str
@@ -370,7 +402,20 @@ def run_metric_expts_for_image(
 
 
 def __run_metric_experiment(seg, gt, outdir, name, expt_fn, needs_gt_relabel=False, needs_gt_morph=False):
-    """Run one experiment on a segmentation and save results."""
+    """Run one experiment on a segmentation and save results.
+
+    Args:
+        seg (sitk.Image): Segmented image
+        gt (sitk.Image): Ground truth segmented image
+        outdir (str): Path to experiment results directory
+        name (str): Identifier for the image and experiment
+        expt_fn (Callable): Function to call for the experiment.
+        needs_gt_relabel (bool, optional): True if running reduced label granularity experiment. Defaults to False.
+        needs_gt_morph (bool, optional): True if running mask_dilation_and_erosion() (for volume similarity robustness experiment). Defaults to False.
+
+    Returns:
+        sitk.Image, [sitk.Image, optional]: post-perturbation segmentation, and optionally perturbed ground truth segmentation (if needs_gt_relabel is True)
+    """    
     os.makedirs(outdir, exist_ok=True)
 
     # Apply experiment
@@ -440,7 +485,15 @@ metric_name_mappings = {
 }
 
 def load_expt_results(results_dir: str, relabeled=False) -> pd.DataFrame:
-    """Load all experiment CSV results into a single DataFrame."""
+    """Load all experiment CSV results into a single DataFrame.
+
+    Args:
+        results_dir (str): Path to results directory
+        relabeled (bool, optional): True if getting results for the reduced label granularity experiment. Defaults to False.
+
+    Returns:
+        pd.DataFrame: Concatenated DataFrame of all relevant CSV files found.
+    """
     rows = []
     identifier = "_metrics.csv" if not relabeled else "_relabel_metrics.csv"
     print("Files identified:")
@@ -464,7 +517,12 @@ def load_expt_results(results_dir: str, relabeled=False) -> pd.DataFrame:
 
 
 def plot_expt_summary_boxplot(expts_df: pd.DataFrame, outdir: str):
-    """Plot a summary boxplot for each experiment."""
+    """Plot a summary boxplot for each experiment.
+
+    Args:
+        expts_df (pd.DataFrame): Data from a single experiment across different subjects.
+        outdir (str): Results directory for output plots
+    """    
     # Exclude results from reduced label granularity experiment
     expts_df = expts_df[(expts_df["Experiment"] != 'relabel') & (expts_df["Label"] != 'SmallStructures')]
 
@@ -563,7 +621,12 @@ def plot_relabeled_summary_boxplots(expts_df: pd.DataFrame, outdir: str):
         plt.close(fig)
 
 def plot_metric_per_expt_by_class(expts_df: pd.DataFrame, outdir: str):
-    """Plot Original vs Perturbed for each class and metric."""
+    """Plot Original vs Perturbed for each class and metric.
+    
+    Args:
+        expts_df (str): Data for each experiment
+        outdir (str): Results directory to store plots in
+    """
     # Exclude 'SmallStructures' label from Reduced Label Granularity experiment
     expts_df = expts_df[(expts_df["Label"] != "SmallStructures") & (expts_df["Experiment"] != 'relabel')]
     

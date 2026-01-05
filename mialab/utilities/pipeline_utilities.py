@@ -294,6 +294,10 @@ def post_process(img: structure.BrainImage, segmentation: sitk.Image, probabilit
 def init_evaluator(labels=None, metrics=None) -> eval_.Evaluator:
     """Initializes an evaluator.
 
+    Args:
+        labels (dict, optional): mapping of label number to label name.
+        metrics (list, optional): metrics to consider in evaluation. Defaults to None.
+
     Returns:
         eval.Evaluator: An evaluator.
     """
