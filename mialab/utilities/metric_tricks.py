@@ -551,7 +551,7 @@ def plot_relabeled_summary_boxplots(tricks_df: pd.DataFrame, outdir: str):
             for lbl in labels_of_interest
         ]
         y_min = 0
-        y_max = math.ceil(np.concatenate(plot_df).max())
+        y_max = max(math.ceil(np.concatenate(plot_df).max()), 1.05)
 
         axs.boxplot(
                         plot_df,
