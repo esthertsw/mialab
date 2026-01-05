@@ -1,28 +1,48 @@
 # Medical Image Analysis Laboratory
 
 Welcome to the medical image analysis laboratory (MIALab).
-This repository contains all code you will need to get started with classical medical image analysis.
+This repository contains all code you will need to recreate the results presented in our report, "Almost Perfect Segmentation Without Better Models: The Impact of Evaluation Metrics" by Emma Chambers, Camila Silva Delgado and Esther Su Wee Tan.
 
-During the MIALab you will work on the task of brain tissue segmentation from magnetic resonance (MR) images.
-We have set up an entire pipeline to solve this task, specifically:
+----
+To run, use the following in your command line or script:
 
-- Pre-processing
-- Registration
-- Feature extraction
-- Voxel-wise tissue classification
-- Post-processing
-- Evaluation
+```
+python pipeline.py [OPTIONS]
 
-After you complete the exercises, dive into the 
-    
-    pipeline.py 
+--result_dir PATH
+    Directory for results.
+    Default: ./mia-result (relative to script directory)
 
-script to learn how all of these steps work together. 
+--data_atlas_dir PATH
+    Directory with atlas data.
+    Default: mialab/data/atlas
 
-During the laboratory you will get to know the entire pipeline and investigate one of these pipeline elements in-depth.
-You will get to know and to use various libraries and software tools needed in the daily life as biomedical engineer or researcher in the medical image analysis domain.
+--data_train_dir PATH
+    Directory with training data.
+    Default: mialab/data/train/
 
-Enjoy!
+--data_test_dir PATH
+    Directory with testing data.
+    Default: mialab/data/test/
+
+--RF {Standard,GridSearch,Balanced}
+    Specify how to run the Random Forest.
+    Default: Standard
+
+--run_metric_expts
+    Run metric manipulation experiments (largest CC, shrink,
+    distance trimming) at multiple stages of the pipeline.
+    Default: off
+
+--load_model
+    Load model weights if available.
+    Default: off
+
+--save_model_weights
+    Save model weights after training.
+    Default: off
+
+```
 
 ----
 
